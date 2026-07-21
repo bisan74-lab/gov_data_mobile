@@ -344,7 +344,6 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                     onOpenDetail: _openDetail,
                     courses: ref.watch(golfCoursesProvider),
                     selectedCourseId: ref.watch(selectedLocationProvider).id,
-                    onTapCourse: _selectCourse,
                     focusTarget: _focusTarget,
                   ),
                 ),
@@ -395,6 +394,17 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                       ),
                     ),
                   ),
+                // 우측 상단: 투명 배경 골프장 선택 칩(아이콘 + 골프장명). 탭하면
+                // 골프장 검색이 열려 지역을 바꾼다. 커서 바가 뜰 땐 숨긴다.
+                if (_forecastPoint == null && cSpeed == null)
+                  Positioned(
+                    top: MediaQuery.of(context).padding.top + 6,
+                    right: 8,
+                    child: _CourseSelectorChip(
+                      name: ref.watch(selectedLocationProvider).name,
+                      onTap: _openSearch,
+                    ),
+                  ),
                 // 오른쪽 세로 아이콘 내비게이션(Windy 탭 전용). 하단 바 높이만큼
                 // 위로 올려 시간 바·상세 예보 표와 겹치지 않게 한다.
                 Positioned(
@@ -403,7 +413,6 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                   child: _WindyNavRail(
                     onSelect: (i) =>
                         ref.read(appTabIndexProvider.notifier).state = i,
-                    onSearch: _openSearch,
                   ),
                 ),
               ],
@@ -432,7 +441,6 @@ class _WindMapArea extends StatefulWidget {
     required this.onOpenDetail,
     required this.courses,
     required this.selectedCourseId,
-    required this.onTapCourse,
     required this.focusTarget,
   });
 
@@ -461,11 +469,8 @@ class _WindMapArea extends StatefulWidget {
   /// 지도에 마커로 찍을 전국 골프장.
   final List<GolfCourse> courses;
 
-  /// 현재 선택된 골프장 id(마커 강조·라벨 표시용).
+  /// 현재 선택된 골프장 id(이 골프장 하나만 마커로 표시하고 여기로 지도를 고정).
   final String? selectedCourseId;
-
-  /// 골프장 마커 탭 시 상위로 알린다(선택 + 이동).
-  final void Function(GolfCourse) onTapCourse;
 
   /// 검색/선택으로 지도를 특정 골프장으로 이동시키라는 신호.
   final ValueNotifier<SeaLocation?> focusTarget;
@@ -510,12 +515,12 @@ class _WindMapAreaState extends State<_WindMapArea> {
       ..scale(s);
   }
 
-  /// 현재 선택된 골프장의 (위도, 경도) — 진입 시 지도를 여기에 고정한다.
-  (double lat, double lon)? _selectedCourseLatLon() {
+  /// 현재 선택된 골프장 — 진입 시 지도를 여기에 고정하고 이 곳만 마커로 찍는다.
+  GolfCourse? _selectedCourse() {
     final id = widget.selectedCourseId;
     if (id == null) return null;
     for (final c in widget.courses) {
-      if (c.id == id) return (c.latitude, c.longitude);
+      if (c.id == id) return c;
     }
     return null;
   }
@@ -608,9 +613,9 @@ class _WindMapAreaState extends State<_WindMapArea> {
           // (골프장이 목록에 없으면 남한 중앙으로 폴백).
           if (!_didInitTransform) {
             _didInitTransform = true;
-            final sel = _selectedCourseLatLon();
-            final kx = projection.x(sel?.$2 ?? 127.8);
-            final ky = projection.y(sel?.$1 ?? 36.3);
+            final sel = _selectedCourse();
+            final kx = projection.x(sel?.longitude ?? 127.8);
+            final ky = projection.y(sel?.latitude ?? 36.3);
             final s = sel != null ? 7.0 : 2.1;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
@@ -692,13 +697,11 @@ class _WindMapAreaState extends State<_WindMapArea> {
                     // 지도 앱처럼 도시 이름만 확대 단계별로 표시(항구 점 라벨은
                     // 제거해 깔끔하게). 지역 선택은 우측 상단 지역 선택 버튼으로 한다.
                     MapCityLabelLayer(projection: projection, scale: _scale),
-                    // 전국 골프장 마커(초록 점). 탭하면 선택 + 이동, 확대 시 이름 표시.
+                    // 선택된 골프장 하나만 초록 마커 + 이름으로 표시한다.
                     GolfMarkerLayer(
                       projection: projection,
                       scale: _scale,
-                      courses: widget.courses,
-                      selectedId: widget.selectedCourseId,
-                      onTap: widget.onTapCourse,
+                      selected: _selectedCourse(),
                     ),
                     // 예보 표가 열려 있으면 그 지점에 윈디식 방향 나침반(로즈)을,
                     // 아니면 탭한 지점에 "상세 예보" 말풍선을 띄운다.
@@ -815,12 +818,9 @@ class _CursorWindBar extends StatelessWidget {
 /// Windy(몰입형 지도) 탭 오른쪽에 뜨는 아이콘 전용 세로 내비게이션.
 /// 박스·라벨 없이 아이콘만. 현재 탭(Windy=air)은 강조색, 나머지는 흰색+그림자.
 class _WindyNavRail extends StatelessWidget {
-  const _WindyNavRail({required this.onSelect, required this.onSearch});
+  const _WindyNavRail({required this.onSelect});
 
   final ValueChanged<int> onSelect;
-
-  /// 돋보기: 골프장 이름 검색을 연다.
-  final VoidCallback onSearch;
 
   // 탭 순서와 일치: 홈0 / 날씨1 / Windy2 / 설정3.
   static const _icons = <(IconData, IconData)>[
@@ -837,14 +837,6 @@ class _WindyNavRail extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 골프장 검색(돋보기).
-        IconButton(
-          onPressed: onSearch,
-          iconSize: 26,
-          visualDensity: VisualDensity.compact,
-          tooltip: '골프장 검색',
-          icon: const Icon(Icons.search, color: Colors.white, shadows: shadow),
-        ),
         for (var i = 0; i < _icons.length; i++)
           IconButton(
             onPressed: () => onSelect(i),
@@ -857,6 +849,59 @@ class _WindyNavRail extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// 지도 우측 상단의 **투명 배경** 골프장 선택 칩. 골프 아이콘 + 현재 골프장명 +
+/// 펼침 표시를 흰 글씨(그림자)로 얹고, 탭하면 골프장 검색이 열려 지역을 바꾼다.
+class _CourseSelectorChip extends StatelessWidget {
+  const _CourseSelectorChip({required this.name, required this.onTap});
+
+  final String name;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const shadow = [Shadow(color: Colors.black, blurRadius: 5)];
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.golf_course,
+              size: 20,
+              color: Colors.white,
+              shadows: shadow,
+            ),
+            const SizedBox(width: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 190),
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  shadows: shadow,
+                ),
+              ),
+            ),
+            const Icon(
+              Icons.expand_more,
+              size: 20,
+              color: Colors.white,
+              shadows: shadow,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
