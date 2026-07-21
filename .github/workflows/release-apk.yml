@@ -42,8 +42,8 @@ jobs:
           tag_name: ${{ steps.vars.outputs.tag }}
           name: 테스트 빌드 ${{ steps.vars.outputs.tag }}
           body: |
-            수동 트리거 테스트 빌드입니다. 합성(mock) 데이터로 동작하며,
-            조석·낚시지수 실데이터는 `--dart-define=DATA_GO_KR_API_KEY=...` 로
+            골프윈디 수동 트리거 테스트 빌드입니다. 합성(mock) 데이터로 동작하며,
+            기상청 단기예보 실데이터는 `--dart-define=DATA_GO_KR_API_KEY=...` 로
             직접 빌드해야 확인할 수 있습니다.
           files: build/app/outputs/flutter-apk/app-release.apk
           prerelease: true
