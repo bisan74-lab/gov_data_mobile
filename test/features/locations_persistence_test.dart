@@ -19,7 +19,7 @@ void main() {
 
   test('선택 지역이 저장되고 새 컨테이너(재시작)에서 복원된다', () async {
     SharedPreferences.setMockInitialValues({});
-    final other = sampleLocations.firstWhere((l) => l.id == 'pinx');
+    final other = sampleLocations[1];
 
     final first = await makeContainer();
     expect(first.read(selectedLocationProvider), sampleLocations.first);

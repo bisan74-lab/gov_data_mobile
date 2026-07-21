@@ -57,8 +57,8 @@ void main() {
     await tester.tap(find.byIcon(Icons.edit_location_alt_outlined).first);
     await tester.pumpAndSettle();
 
-    // 시드 목록의 첫 골프장이 바텀시트에 보인다.
-    expect(find.text('남서울CC'), findsWidgets);
+    // 목록의 첫 골프장(기본 선택)이 보인다.
+    expect(find.text('라데나골프클럽'), findsWidgets);
   });
 
   testWidgets('설정 탭에 템플릿/정보가 보인다', (tester) async {

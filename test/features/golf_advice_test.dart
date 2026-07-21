@@ -91,7 +91,8 @@ void main() {
     });
 
     test('golfCourseById로 조회된다', () {
-      expect(golfCourseById('pinx')?.name, '핀크스GC');
+      final first = golfCourses.first;
+      expect(golfCourseById(first.id), first);
       expect(golfCourseById('no_such'), isNull);
     });
   });
