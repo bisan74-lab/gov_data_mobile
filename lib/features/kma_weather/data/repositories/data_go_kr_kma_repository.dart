@@ -22,13 +22,21 @@ class DataGoKrKmaRepository implements KmaWeatherRepository {
   final String _serviceKey;
 
   static const _host = 'apis.data.go.kr';
-  static const _path = '/1360000/VilageFcstInfoService_2.0/getVilageFcst';
+  static const _base = '/1360000/VilageFcstInfoService_2.0';
+  static const _vilagePath = '$_base/getVilageFcst'; // 단기예보(3일)
+  static const _ultraFcstPath = '$_base/getUltraSrtFcst'; // 초단기예보(6h)
+  static const _ncstPath = '$_base/getUltraSrtNcst'; // 초단기실황(현재값)
 
   /// 단기예보 발표시각(정시+10분 뒤 배포). 매일 8회.
   static const _baseHours = [2, 5, 8, 11, 14, 17, 20, 23];
 
-  /// 가장 최근에 발표됐을 base_date/base_time을 고른다(발표 반영 지연을
-  /// 감안해 10분 여유를 둔다).
+  String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}'
+      '${d.month.toString().padLeft(2, '0')}'
+      '${d.day.toString().padLeft(2, '0')}';
+
+  /// 가장 최근에 발표됐을 단기예보 base_date/base_time을 고른다(발표 반영
+  /// 지연을 감안해 10분 여유를 둔다).
   (String baseDate, String baseTime) _latestBaseDateTime(DateTime now) {
     final adjusted = now.subtract(const Duration(minutes: 10));
     var date = adjusted;
@@ -40,18 +48,79 @@ class DataGoKrKmaRepository implements KmaWeatherRepository {
       date = adjusted.subtract(const Duration(days: 1));
       hour = _baseHours.last;
     }
-    final y = date.year.toString().padLeft(4, '0');
-    final m = date.month.toString().padLeft(2, '0');
-    final d = date.day.toString().padLeft(2, '0');
-    return ('$y$m$d', '${hour.toString().padLeft(2, '0')}00');
+    return (_ymd(date), '${hour.toString().padLeft(2, '0')}00');
   }
 
+  /// 초단기예보(getUltraSrtFcst): 매시각 30분 발표(~45분 뒤 제공).
+  (String, String) _ultraFcstBase(DateTime now) {
+    final t = now.subtract(const Duration(minutes: 45));
+    return (_ymd(t), '${t.hour.toString().padLeft(2, '0')}30');
+  }
+
+  /// 초단기실황(getUltraSrtNcst): 매시각 정시 관측, 40분 뒤 제공.
+  (String, String) _ncstBase(DateTime now) {
+    final t = now.subtract(const Duration(minutes: 40));
+    return (_ymd(t), '${t.hour.toString().padLeft(2, '0')}00');
+  }
+
+  /// 세 서비스를 병합해 시간별 예보를 만든다. 우선순위는
+  /// **초단기실황(현재) > 초단기예보(6h) > 단기예보(3일)**로, 근접 시간일수록
+  /// 더 정밀한 값이 덮어쓴다. 초단기 두 호출은 best-effort라 실패해도
+  /// 단기예보만으로 정상 동작한다.
   @override
   Future<KmaForecast> fetchForecast(SeaLocation location) async {
     final (nx, ny) = _latLonToGrid(location.latitude, location.longitude);
-    final (baseDate, baseTime) = _latestBaseDateTime(DateTime.now());
+    final now = DateTime.now();
+    final byTime = <String, Map<String, String>>{};
 
-    final uri = Uri.https(_host, _path, {
+    // 1) 단기예보(3일) — 뼈대.
+    final (bDate, bTime) = _latestBaseDateTime(now);
+    final base = await _fetch(_vilagePath, nx, ny, bDate, bTime);
+    if (base.isEmpty) {
+      throw const FormatException('기상청 단기예보 응답에 데이터가 없음');
+    }
+    _collect(byTime, base, valueKey: 'fcstValue');
+
+    // 2) 초단기예보(6h) — 근접 시간을 더 정밀한 값으로 덮어쓴다.
+    try {
+      final (fDate, fTime) = _ultraFcstBase(now);
+      _collect(
+        byTime,
+        await _fetch(_ultraFcstPath, nx, ny, fDate, fTime),
+        valueKey: 'fcstValue',
+      );
+    } catch (_) {
+      // 초단기예보 실패 — 단기예보 값 유지.
+    }
+
+    // 3) 초단기실황 — 현재 시각 관측값으로 덮어쓴다.
+    try {
+      final (nDate, nTime) = _ncstBase(now);
+      _collect(
+        byTime,
+        await _fetch(_ncstPath, nx, ny, nDate, nTime),
+        valueKey: 'obsrValue',
+      );
+    } catch (_) {
+      // 초단기실황 실패 — 무시.
+    }
+
+    final keys = byTime.keys.toList()..sort();
+    final hourly = [
+      for (final key in keys)
+        if (_toHourly(key, byTime[key]!) case final h?) h,
+    ];
+    return KmaForecast(locationId: location.id, hourly: hourly);
+  }
+
+  Future<List<Map<String, dynamic>>> _fetch(
+    String path,
+    int nx,
+    int ny,
+    String baseDate,
+    String baseTime,
+  ) async {
+    final uri = Uri.https(_host, path, {
       'serviceKey': _serviceKey,
       'pageNo': '1',
       'numOfRows': '1000',
@@ -61,38 +130,32 @@ class DataGoKrKmaRepository implements KmaWeatherRepository {
       'nx': nx.toString(),
       'ny': ny.toString(),
     });
-
     final res = await _client.get(uri);
     if (res.statusCode != 200) {
-      throw http.ClientException('기상청 단기예보 응답 오류 ${res.statusCode}', uri);
+      throw http.ClientException('기상청 응답 오류 ${res.statusCode}', uri);
     }
-    final items = parseDataGoKrItems(res.body);
-    if (items.isEmpty) {
-      throw const FormatException('기상청 단기예보 응답에 데이터가 없음');
-    }
-    return KmaForecast(locationId: location.id, hourly: _mapItems(items));
+    return parseDataGoKrItems(res.body);
   }
 
-  /// fcstDate+fcstTime별로 category(TMP/SKY/PTY/POP/REH/WSD) 값을 모아
-  /// 시간별 레코드로 합친다.
-  List<KmaHourly> _mapItems(List<Map<String, dynamic>> items) {
-    final byTime = <String, Map<String, String>>{};
+  /// 예보/실황 item들을 시각별 category맵으로 모은다(뒤에 온 값이 앞을 덮음).
+  /// 초단기의 T1H(기온)는 단기예보 TMP와 같은 뜻이라 TMP로 정규화해 병합한다.
+  /// 실황 item은 fcstDate/fcstTime 대신 baseDate/baseTime을 쓴다.
+  void _collect(
+    Map<String, Map<String, String>> byTime,
+    List<Map<String, dynamic>> items, {
+    required String valueKey,
+  }) {
     for (final item in items) {
-      final date = item['fcstDate']?.toString();
-      final time = item['fcstTime']?.toString();
-      final category = item['category']?.toString();
-      final value = item['fcstValue']?.toString();
+      final date = (item['fcstDate'] ?? item['baseDate'])?.toString();
+      final time = (item['fcstTime'] ?? item['baseTime'])?.toString();
+      var category = item['category']?.toString();
+      final value = item[valueKey]?.toString();
       if (date == null || time == null || category == null || value == null) {
         continue;
       }
+      if (category == 'T1H') category = 'TMP'; // 초단기 기온 → 단기 기온 키.
       byTime.putIfAbsent('$date$time', () => {})[category] = value;
     }
-
-    final keys = byTime.keys.toList()..sort();
-    return [
-      for (final key in keys)
-        if (_toHourly(key, byTime[key]!) case final h?) h,
-    ];
   }
 
   KmaHourly? _toHourly(String key, Map<String, String> v) {
