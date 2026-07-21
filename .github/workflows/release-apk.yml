@@ -29,8 +29,13 @@ jobs:
       - name: 의존성 설치
         run: flutter pub get
 
-      - name: 릴리스 APK 빌드 (합성 데이터 — 실 API 키는 저장소에 두지 않음)
-        run: flutter build apk --release
+      # 실 API 키는 저장소 Secret(DATA_GO_KR_API_KEY)에서만 주입한다 —
+      # 코드·로그에 키가 노출되지 않는다. Secret이 없으면 빈 값이 들어가
+      # 자동으로 합성(mock) 데이터로 동작한다.
+      - name: 릴리스 APK 빌드
+        run: >-
+          flutter build apk --release
+          --dart-define=DATA_GO_KR_API_KEY=${{ secrets.DATA_GO_KR_API_KEY }}
 
       - name: 태그 계산
         id: vars
