@@ -7,6 +7,7 @@ import '../features/kma_weather/presentation/kma_weather_screen.dart';
 import '../features/settings/presentation/providers.dart';
 import '../features/settings/presentation/settings_screen.dart';
 import '../features/weather/presentation/weather_screen.dart';
+import 'app_tab_provider.dart';
 import 'force_upgrade_screen.dart';
 import 'theme.dart';
 
@@ -43,15 +44,8 @@ class GolfWindyApp extends ConsumerWidget {
 
 /// 하단 탭 기반 앱 셸: 홈 / 날씨 / Windy / 설정.
 /// 홈·날씨·Windy는 모두 공용으로 선택된 골프장을 따른다.
-class AppShell extends ConsumerStatefulWidget {
+class AppShell extends ConsumerWidget {
   const AppShell({super.key});
-
-  @override
-  ConsumerState<AppShell> createState() => _AppShellState();
-}
-
-class _AppShellState extends ConsumerState<AppShell> {
-  int _index = 0;
 
   static const _screens = [
     HomeScreen(),
@@ -61,43 +55,50 @@ class _AppShellState extends ConsumerState<AppShell> {
   ];
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final index = ref.watch(appTabIndexProvider);
+    // Windy(몰입형 지도) 탭에서는 하단 라벨 바를 숨긴다 — 그 탭 안에서 오른쪽
+    // 세로 아이콘 내비게이션을 띄운다. 나머지 탭은 원래 하단 라벨 내비게이션.
+    final onWindy = index == windyTabIndex;
     return Scaffold(
       body: IndexedStack(
-        index: _index,
+        index: index,
         // 화면 밖 탭(특히 애니메이션이 있는 Windy 탭)의 Ticker를 꺼서
         // 불필요한 리빌드와 배터리 소모, pumpAndSettle 무한대기를 막는다.
         children: [
           for (var i = 0; i < _screens.length; i++)
-            TickerMode(enabled: i == _index, child: _screens[i]),
+            TickerMode(enabled: i == index, child: _screens[i]),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: '홈',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.wb_sunny_outlined),
-            selectedIcon: Icon(Icons.wb_sunny),
-            label: '날씨',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.air_outlined),
-            selectedIcon: Icon(Icons.air),
-            label: 'Windy',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: '설정',
-          ),
-        ],
-      ),
+      bottomNavigationBar: onWindy
+          ? null
+          : NavigationBar(
+              selectedIndex: index,
+              onDestinationSelected: (i) =>
+                  ref.read(appTabIndexProvider.notifier).state = i,
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home),
+                  label: '홈',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.wb_sunny_outlined),
+                  selectedIcon: Icon(Icons.wb_sunny),
+                  label: '날씨',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.air_outlined),
+                  selectedIcon: Icon(Icons.air),
+                  label: 'Windy',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon: Icon(Icons.settings),
+                  label: '설정',
+                ),
+              ],
+            ),
     );
   }
 }

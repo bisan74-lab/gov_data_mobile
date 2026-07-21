@@ -46,7 +46,7 @@ dart format lib test     # 커밋 전 포맷
   위젯 테스트가 멈춘다.
 - 바람 지도(`features/weather/presentation/`)의 `mapViewBounds`
   (`widgets/map_projection.dart`)와 `OpenMeteoWindFieldRepository`의 격자 범위는
-  **같은 bbox**(위 21~54, 경 112~144)를 써야 히트맵이 뷰를 채운다. 범위를 바꾸면
+  **같은 bbox**(위 18~57, 경 108~148)를 써야 히트맵이 뷰를 채운다. 범위를 바꾸면
   `country_borders_data.dart`도 같은 bbox로 다시 뽑아야 한다(`tool/gen_coast.py`,
   Natural Earth 10m). 해안선(`CoastlinePainter`)·도시 라벨(`MapCityLabelLayer`)·
   골프장 마커(`GolfMarkerLayer`)는 **모두 실제 WGS84 좌표**를 쓰고 경도 보정

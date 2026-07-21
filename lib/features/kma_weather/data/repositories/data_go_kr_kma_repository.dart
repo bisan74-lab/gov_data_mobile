@@ -113,6 +113,8 @@ class DataGoKrKmaRepository implements KmaWeatherRepository {
       popPercent: int.tryParse(v['POP'] ?? '') ?? 0,
       humidityPercent: int.tryParse(v['REH'] ?? '') ?? 0,
       windSpeedMs: double.tryParse(v['WSD'] ?? '') ?? 0,
+      // VEC(풍향, 0~360°). 바람 특화 앱이라 Open-Meteo 대신 기상청 값을 우선한다.
+      windDirDeg: double.tryParse(v['VEC'] ?? ''),
     );
   }
 

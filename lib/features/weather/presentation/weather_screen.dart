@@ -5,14 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../app/app_tab_provider.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/kst.dart';
 import '../../golf/data/models/golf_course.dart';
 import '../../golf/presentation/providers.dart';
 import '../../golf/presentation/widgets/golf_marker_layer.dart';
 import '../../golf/presentation/widgets/golf_search_sheet.dart';
 import '../../locations/data/models/sea_location.dart';
 import '../../locations/presentation/providers.dart';
-import '../../locations/presentation/widgets/region_selector_action.dart';
 import '../../kma_weather/presentation/widgets/weather_icon.dart';
 import '../data/models/marine_weather.dart';
 import '../data/models/wind_field.dart';
@@ -68,23 +69,16 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
   double? _cursorLat;
   double? _cursorLon;
 
-  /// 골프장 검색/마커 탭 시 지도를 그 골프장으로 이동시키라는 신호.
-  final ValueNotifier<SeaLocation?> _focusTarget = ValueNotifier(null);
+  /// 하단 바(시간 슬라이더 또는 상세 예보 표)가 차지하는 높이. 오른쪽 세로
+  /// 아이콘 내비게이션을 이 높이만큼 위로 올려, 표가 떴을 때 겹치지 않게 한다.
+  final GlobalKey _bottomBarKey = GlobalKey();
+  double _bottomBarHeight = 0;
 
-  /// 돋보기: 골프장 이름 검색 → 선택하면 지도를 그 골프장으로 이동·핀 표시.
-  Future<void> _openSearch() async {
-    final courses = ref.read(golfCoursesProvider);
-    final picked = await showGolfSearchSheet(context, courses);
-    if (picked == null || !mounted) return;
-    _selectCourse(picked);
-  }
-
-  /// 지도 마커 탭 시 골프장 선택 + 이동 + 커서 핀(→ "상세 예보" 진입 가능).
-  void _selectCourse(GolfCourse course) {
-    final loc = course.toLocation();
-    ref.read(selectedLocationProvider.notifier).select(loc);
-    _focusTarget.value = loc;
-    _onPick(loc.latitude, loc.longitude);
+  void _measureBottomBar() {
+    final h = _bottomBarKey.currentContext?.size?.height ?? 0;
+    if ((h - _bottomBarHeight).abs() > 0.5 && mounted) {
+      setState(() => _bottomBarHeight = h);
+    }
   }
 
   void _onPick(double lat, double lon) {
@@ -105,14 +99,41 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
     setState(() => _forecastPoint = pointSeaLocation(lat, lon));
   }
 
+  /// 상단 커서 바의 X — 찍은 지점을 지워 바를 없앤다.
+  void _clearCursor() {
+    setState(() {
+      _cursorLat = null;
+      _cursorLon = null;
+    });
+  }
+
+  /// 골프장 검색/마커 탭 시 지도를 그 골프장으로 이동시키라는 신호.
+  final ValueNotifier<SeaLocation?> _focusTarget = ValueNotifier(null);
+
+  /// 돋보기: 골프장 이름 검색 → 선택하면 지도를 그 골프장으로 이동·핀 표시.
+  Future<void> _openSearch() async {
+    final courses = ref.read(golfCoursesProvider);
+    final picked = await showGolfSearchSheet(context, courses);
+    if (picked == null || !mounted) return;
+    _selectCourse(picked);
+  }
+
+  /// 지도 마커 탭 시 골프장 선택 + 이동 + 커서 핀(→ "상세 예보" 진입 가능).
+  void _selectCourse(GolfCourse course) {
+    final loc = course.toLocation();
+    ref.read(selectedLocationProvider.notifier).select(loc);
+    _focusTarget.value = loc;
+    _onPick(loc.latitude, loc.longitude);
+  }
+
   void _closeDetail() {
     _roseHour.value = null;
     setState(() {
       _forecastPoint = null;
-      // 표를 닫으면 지도를 다시 현재 시각 바람으로 되돌린다.
+      // 표를 닫으면 지도를 다시 현재 시각(서울 기준) 바람으로 되돌린다.
       final series = _series;
       if (series != null) {
-        _hourOffset = series.indexClosestTo(DateTime.now());
+        _hourOffset = series.indexClosestTo(nowKst());
       }
     });
   }
@@ -122,29 +143,30 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
     if (idx != _hourOffset) setState(() => _hourOffset = idx);
   }
 
-  /// 지도 시각을 다시 "지금"으로 되돌린다.
+  /// 지도 시각을 다시 "지금"(서울 기준)으로 되돌린다.
   void _mapHourToNow() {
     final series = _series;
     if (series == null) return;
-    final idx = series.indexClosestTo(DateTime.now());
+    final idx = series.indexClosestTo(nowKst());
     if (idx != _hourOffset) setState(() => _hourOffset = idx);
   }
 
-  static const _particleCount = 230;
-  static const _maxAgeSeconds = 24.0;
+  // Windy처럼 가늘고 은은한 흐름선을 아주 촘촘하게: 개수를 1380으로 늘린다.
+  // 굵기·투명도는 페인터에서 더 얇고 투명하게 그린다.
+  static const _particleCount = 1380;
+  static const _maxAgeSeconds = 20.0;
 
-  /// 궤적 길이(포인트 수)를 풍속에 비례해 늘려, 바람이 셀수록 흰 점이
-  /// 짧은 선 → 조금 긴 선 → 아주 긴 흐름선으로 보이게 한다(윈디식 잔상).
-  /// Windy 앱처럼 올챙이 꼬리가 길고 또렷하게 남도록 최소·최대 길이와 풍속
-  /// 비례 계수를 모두 키웠다. 성능(프레임당 drawLine 수 = 파티클수 × 궤적)은
-  /// 파티클 레이어만 RepaintBoundary로 다시 그려 감당한다.
-  static const _minTrail = 34;
-  static const _maxTrailCap = 185;
-  static const _trailSpeedFactor = 11.0;
+  /// 궤적 길이(포인트 수)를 풍속에 비례해 늘려, 바람이 셀수록 짧은 선 →
+  /// 조금 긴 흐름선으로 보이게 한다(윈디식 잔상). 개수를 크게 늘린 만큼
+  /// 성능(프레임당 drawLine 수 = 파티클수 × 궤적)을 위해 궤적 길이는 짧게
+  /// 유지한다(파티클 레이어만 RepaintBoundary로 다시 그린다). 잔상을 0.8배로.
+  static const _minTrail = 13;
+  static const _maxTrailCap = 67;
+  static const _trailSpeedFactor = 4.8;
 
   /// 위경도 이동 배율(도/초 per m/s) — 화면 안 흐름선의 이동 "속도"를 정하는
-  /// 시각적 배율이며 실제 지리 이동 속도가 아니다. Windy에 맞춰 0.18로 둔다.
-  static const _degreesPerMps = 0.18;
+  /// 시각적 배율이며 실제 지리 이동 속도가 아니다. 이동 속도를 0.8배로 늦춘다.
+  static const _degreesPerMps = 0.144;
 
   @override
   void initState() {
@@ -177,8 +199,9 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
   void _ensureSeeded(WindFieldSeries series) {
     if (_series != null) return;
     _series = series;
-    // 시계열은 오늘 0시부터 시작하므로, 지도 기본 시각을 "지금"에 맞춘다.
-    _hourOffset = series.indexClosestTo(DateTime.now());
+    // 시계열은 오늘 0시(서울)부터 시작하므로, 지도 기본 시각을 서울 기준
+    // "지금"에 맞춘다(기기 시간대 설정과 무관).
+    _hourOffset = series.indexClosestTo(nowKst());
     final field = series.at(_hourOffset);
     _particles
       ..clear()
@@ -245,21 +268,13 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
         if (!didPop && _forecastPoint != null) _closeDetail();
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Windy(윈디)'),
-          actions: [
-            IconButton(
-              tooltip: '골프장 검색',
-              icon: const Icon(Icons.search),
-              onPressed: _openSearch,
-            ),
-            const RegionSelectorAction(),
-          ],
-        ),
+        // 상단 앱바 없이 지도를 전체 화면으로(윈디식 몰입형). 컨트롤은 지도
+        // 위에 투명하게 떠 있다.
         body: seriesAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(child: Text('바람장을 불러오지 못했습니다: $e')),
-          data: (series) {
+          data: (result) {
+            final series = result.series;
             _ensureSeeded(series);
             final field = series.at(_hourOffset);
 
@@ -275,8 +290,38 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                   cSpeed = math.sqrt(u * u + v * v);
                   cDir = (math.atan2(-u, -v) * 180 / math.pi + 360) % 360;
                 }
+                // 격자(약 2° 간격) 보간은 국지 바람이 뭉개져 실제(윈디 지점
+                // 표시값)보다 약하게 나온다. 정확한 좌표로 요청한 지점 시계열이
+                // 도착하면, 지도에 표시 중인 시각과 같은 시각의 지점값으로
+                // 덮어써 윈디와 숫자가 맞게 한다(도착 전엔 격자값 폴백).
+                final points = ref
+                    .watch(
+                      cursorWindSeriesProvider((
+                        lat: (clat * 1000).roundToDouble() / 1000,
+                        lon: (clon * 1000).roundToDouble() / 1000,
+                      )),
+                    )
+                    .valueOrNull;
+                if (points != null && points.isNotEmpty) {
+                  var best = points.first;
+                  var bestDiff = best.time.difference(field.time).abs();
+                  for (final p in points) {
+                    final d = p.time.difference(field.time).abs();
+                    if (d < bestDiff) {
+                      bestDiff = d;
+                      best = p;
+                    }
+                  }
+                  cSpeed = best.speedMs;
+                  cDir = best.directionDeg;
+                }
               }
             }
+
+            // 하단 바 높이를 렌더 뒤 측정해 오른쪽 아이콘 내비를 그 위로 올린다.
+            WidgetsBinding.instance.addPostFrameCallback(
+              (_) => _measureBottomBar(),
+            );
 
             return Stack(
               children: [
@@ -307,6 +352,7 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                       speed: cSpeed,
                       dir: cDir,
                       onDetail: _openDetail,
+                      onClose: _clearCursor,
                     ),
                   ),
                 // 하단(지도 모드): 시간·날짜 슬라이더. 지도만 보이는 상태에서
@@ -316,12 +362,16 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    child: _MapTimeBar(
-                      series: series,
-                      offset: _hourOffset,
-                      nowOffset: series.indexClosestTo(DateTime.now()),
-                      onChanged: _setMapHour,
-                      onNow: _mapHourToNow,
+                    child: KeyedSubtree(
+                      key: _bottomBarKey,
+                      child: _MapTimeBar(
+                        series: series,
+                        offset: _hourOffset,
+                        nowOffset: series.indexClosestTo(nowKst()),
+                        synthetic: result.isSynthetic,
+                        onChanged: _setMapHour,
+                        onNow: _mapHourToNow,
+                      ),
                     ),
                   ),
                 // 하단: 상세 예보 표(열렸을 때만).
@@ -330,12 +380,26 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    child: _PointForecastPanel(
-                      location: fp,
-                      roseHour: _roseHour,
-                      onClose: _closeDetail,
+                    child: KeyedSubtree(
+                      key: _bottomBarKey,
+                      child: _PointForecastPanel(
+                        location: fp,
+                        roseHour: _roseHour,
+                        onClose: _closeDetail,
+                      ),
                     ),
                   ),
+                // 오른쪽 세로 아이콘 내비게이션(Windy 탭 전용). 하단 바 높이만큼
+                // 위로 올려 시간 바·상세 예보 표와 겹치지 않게 한다.
+                Positioned(
+                  right: 2,
+                  bottom: _bottomBarHeight + 2,
+                  child: _WindyNavRail(
+                    onSelect: (i) =>
+                        ref.read(appTabIndexProvider.notifier).state = i,
+                    onSearch: _openSearch,
+                  ),
+                ),
               ],
             );
           },
@@ -409,7 +473,9 @@ class _WindMapAreaState extends State<_WindMapArea> {
   DateTime? _heatmapTime;
   final TransformationController _transformController =
       TransformationController();
-  double _scale = 1.8;
+  // 지도 범위를 동서남북으로 넓힌 만큼, 진입 기본 배율도 조금 올려 남한이
+  // 이전과 비슷한 크기로 보이게 한다.
+  double _scale = 2.1;
   bool _didInitTransform = false;
 
   /// 마지막 레이아웃의 화면 크기·투영(검색 이동 시 재센터 계산에 쓴다).
@@ -527,7 +593,7 @@ class _WindMapAreaState extends State<_WindMapArea> {
             _didInitTransform = true;
             final kx = projection.x(127.8); // 남한 중앙 경도
             final ky = projection.y(36.3); // 남한 중앙 위도
-            const s = 1.8;
+            const s = 2.1;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
               _transformController.value = Matrix4.identity()
@@ -542,9 +608,15 @@ class _WindMapAreaState extends State<_WindMapArea> {
             transformationController: _transformController,
             // 캔버스를 화면보다 크게(cover) 잡으므로 constrained를 끈다.
             constrained: false,
-            minScale: 1,
+            // 완전히 축소해도 지도가 뷰를 덮도록(=검은 여백 없음) 최소 배율을
+            // 1보다 살짝 크게 둔다. 정확히 1이면 세로가 뷰 높이에 딱 맞아
+            // 세로 팬이 잠기는데(표가 떴을 때 아래로 못 내려가던 원인), 1.15면
+            // 항상 약간의 팬 여유가 생겨 잠기지 않으면서도 검은 여백은 없다.
+            minScale: 1.15,
             // 섬·소지역 이름까지 보이도록 더 깊게 확대할 수 있게 한다.
             maxScale: 21,
+            // 지도가 항상 뷰를 덮으므로 경계 여백은 두지 않는다(가장자리에 검은
+            // 빈 부분이 올라오지 않게 한다).
             boundaryMargin: EdgeInsets.zero,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -590,8 +662,9 @@ class _WindMapAreaState extends State<_WindMapArea> {
                         child: CustomPaint(
                           painter: WindMapPainter(
                             particles: widget.particles,
-                            // 순백이 아니라 살짝 흐린 회백색으로 은은하게.
-                            color: const Color(0xFFDCE6F0),
+                            // 순백이 아니라 살짝 어두운 회청색으로 은은하게
+                            // (Windy처럼 흰 선이 과하게 밝지 않게).
+                            color: const Color(0xFFAEB9C6),
                             repaint: widget.repaint,
                           ),
                           size: fieldRect.size,
@@ -664,47 +737,108 @@ class _CursorWindBar extends StatelessWidget {
     required this.speed,
     required this.dir,
     required this.onDetail,
+    required this.onClose,
   });
 
   final double speed;
   final double dir;
   final VoidCallback onDetail;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    const shadow = [Shadow(color: Colors.black, blurRadius: 4)];
     return SafeArea(
       bottom: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
-        child: Material(
-          color: scheme.surface,
-          elevation: 3,
-          borderRadius: BorderRadius.circular(14),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                WindArrow(directionDeg: dir, size: 24, color: scheme.primary),
-                const SizedBox(width: 10),
-                Text(
-                  '${compassKo(dir)}\ud48d  ${formatWind(speed)}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const Spacer(),
-                FilledButton.tonalIcon(
-                  onPressed: onDetail,
-                  icon: const Icon(Icons.insights, size: 18),
-                  label: const Text('\uc0c1\uc138 \uc608\ubcf4'),
-                  style: FilledButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ),
-              ],
+        padding: const EdgeInsets.fromLTRB(12, 4, 4, 0),
+        child: Row(
+          children: [
+            WindArrow(directionDeg: dir, size: 24, color: Colors.white),
+            const SizedBox(width: 10),
+            Text(
+              '${compassKo(dir)}\ud48d  ${formatWind(speed)}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                shadows: shadow,
+              ),
             ),
-          ),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: onDetail,
+              icon: const Icon(Icons.insights, size: 18, color: Colors.white),
+              label: const Text(
+                '\uc0c1\uc138 \uc608\ubcf4',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  shadows: shadow,
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: onClose,
+              tooltip: '\ub2eb\uae30',
+              icon: const Icon(
+                Icons.close,
+                color: Colors.white,
+                shadows: shadow,
+              ),
+            ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+/// Windy(몰입형 지도) 탭 오른쪽에 뜨는 아이콘 전용 세로 내비게이션.
+/// 박스·라벨 없이 아이콘만. 현재 탭(Windy=air)은 강조색, 나머지는 흰색+그림자.
+class _WindyNavRail extends StatelessWidget {
+  const _WindyNavRail({required this.onSelect, required this.onSearch});
+
+  final ValueChanged<int> onSelect;
+
+  /// 돋보기: 골프장 이름 검색을 연다.
+  final VoidCallback onSearch;
+
+  // 탭 순서와 일치: 홈0 / 날씨1 / Windy2 / 설정3.
+  static const _icons = <(IconData, IconData)>[
+    (Icons.home_outlined, Icons.home),
+    (Icons.wb_sunny_outlined, Icons.wb_sunny),
+    (Icons.air_outlined, Icons.air),
+    (Icons.settings_outlined, Icons.settings),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    const shadow = [Shadow(color: Colors.black, blurRadius: 5)];
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 골프장 검색(돋보기).
+        IconButton(
+          onPressed: onSearch,
+          iconSize: 26,
+          visualDensity: VisualDensity.compact,
+          tooltip: '골프장 검색',
+          icon: const Icon(Icons.search, color: Colors.white, shadows: shadow),
+        ),
+        for (var i = 0; i < _icons.length; i++)
+          IconButton(
+            onPressed: () => onSelect(i),
+            iconSize: 26,
+            visualDensity: VisualDensity.compact,
+            icon: Icon(
+              i == windyTabIndex ? _icons[i].$2 : _icons[i].$1,
+              color: i == windyTabIndex ? primary : Colors.white,
+              shadows: shadow,
+            ),
+          ),
+      ],
     );
   }
 }
@@ -718,6 +852,7 @@ class _MapTimeBar extends StatelessWidget {
     required this.series,
     required this.offset,
     required this.nowOffset,
+    required this.synthetic,
     required this.onChanged,
     required this.onNow,
   });
@@ -725,6 +860,10 @@ class _MapTimeBar extends StatelessWidget {
   final WindFieldSeries series;
   final int offset;
   final int nowOffset;
+
+  /// 실데이터 호출 실패로 합성(목업) 바람이 표시 중인지. 사용자에게 명확히
+  /// 알려 실데이터(윈디)와 비교하다 혼동하지 않게 한다.
+  final bool synthetic;
   final ValueChanged<int> onChanged;
   final VoidCallback onNow;
 
@@ -735,107 +874,162 @@ class _MapTimeBar extends StatelessWidget {
     final i = offset.clamp(0, maxIdx);
     final t = series.at(i).time;
     final isNow = i == nowOffset;
-    // 현재 시각 대비 상대 표시(+N시간 / -N시간).
-    final diffH = i - nowOffset;
+    // 현재 시각 대비 상대 표시(+N시간 / -N시간). 스텝 간격이 1시간이 아닐 수
+    // 있으므로(서버 데이터는 3시간 간격) 인덱스 차가 아니라 실제 시각 차로
+    // 계산해 정확히 표시한다.
+    final diffH = t.difference(series.at(nowOffset).time).inHours;
     final rel = diffH == 0 ? '지금' : (diffH > 0 ? '+$diffH시간' : '$diffH시간');
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-        child: Material(
-          color: scheme.surface.withValues(alpha: 0.95),
-          elevation: 4,
-          borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 6, 2),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.schedule, size: 18, color: scheme.primary),
-                    const SizedBox(width: 6),
-                    if (isNow)
-                      Container(
-                        margin: const EdgeInsets.only(right: 6),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.primary,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+    const shadow = [Shadow(color: Colors.black, blurRadius: 4)];
+    // 흰 박스 대신 아래로 갈수록 살짝 어두워지는 투명 스크림(윈디식)만 깔아
+    // 밝은 지도 위에서도 슬라이더·글씨가 읽히게 한다.
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.transparent, Color(0x80000000)],
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 6, 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 실데이터를 못 받아 합성 바람이 표시 중이면 명확히 알린다.
+              if (synthetic)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.wifi_off,
+                        size: 14,
+                        color: Color(0xFFFFB4A9),
+                        shadows: shadow,
+                      ),
+                      const SizedBox(width: 5),
+                      Expanded(
                         child: Text(
-                          '지금',
-                          style: TextStyle(
-                            color: scheme.onPrimary,
+                          '실데이터 연결 실패 — 합성 바람 표시 중 (탭을 다시 열면 재시도)',
+                          style: const TextStyle(
+                            color: Color(0xFFFFB4A9),
                             fontSize: 11,
-                            fontWeight: FontWeight.bold,
+                            shadows: shadow,
                           ),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                    Flexible(
-                      child: Text(
-                        '${formatMonthDay(t)}  ${formatHm(t)}',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.bold),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (!isNow) ...[
-                      const SizedBox(width: 6),
-                      Text(
-                        rel,
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(color: scheme.onSurfaceVariant),
                       ),
                     ],
-                    const Spacer(),
-                    TextButton(
-                      onPressed: isNow ? null : onNow,
-                      style: TextButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                      ),
-                      child: const Text('지금'),
-                    ),
-                  ],
+                  ),
                 ),
-                Row(
-                  children: [
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.chevron_left),
-                      tooltip: '1시간 전',
-                      onPressed: i > 0 ? () => onChanged(i - 1) : null,
-                    ),
-                    Expanded(
-                      child: SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          trackHeight: 3,
-                          overlayShape: const RoundSliderOverlayShape(
-                            overlayRadius: 14,
-                          ),
-                        ),
-                        child: Slider(
-                          value: i.toDouble(),
-                          min: 0,
-                          max: maxIdx.toDouble(),
-                          onChanged: (v) => onChanged(v.round()),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.schedule,
+                    size: 18,
+                    color: Colors.white,
+                    shadows: shadow,
+                  ),
+                  const SizedBox(width: 6),
+                  if (isNow)
+                    Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '지금',
+                        style: TextStyle(
+                          color: scheme.onPrimary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.chevron_right),
-                      tooltip: '1시간 후',
-                      onPressed: i < maxIdx ? () => onChanged(i + 1) : null,
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '${t.month}/${t.day} (${weekdayKo(t)}) ${formatHm(t)}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          shadows: shadow,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (!isNow) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      rel,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        shadows: shadow,
+                      ),
                     ),
                   ],
-                ),
-              ],
-            ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: isNow ? null : onNow,
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                    ),
+                    child: const Text('지금', style: TextStyle(shadows: shadow)),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    color: Colors.white,
+                    icon: const Icon(Icons.chevron_left, shadows: shadow),
+                    tooltip: '이전 시각',
+                    onPressed: i > 0 ? () => onChanged(i - 1) : null,
+                  ),
+                  Expanded(
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 3,
+                        activeTrackColor: Colors.white,
+                        inactiveTrackColor: Colors.white38,
+                        thumbColor: Colors.white,
+                        overlayColor: Colors.white24,
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 14,
+                        ),
+                      ),
+                      child: Slider(
+                        value: i.toDouble(),
+                        min: 0,
+                        max: maxIdx.toDouble(),
+                        onChanged: (v) => onChanged(v.round()),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    color: Colors.white,
+                    icon: const Icon(Icons.chevron_right, shadows: shadow),
+                    tooltip: '다음 시각',
+                    onPressed: i < maxIdx ? () => onChanged(i + 1) : null,
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -1119,9 +1313,9 @@ class _PointForecastPanelState extends ConsumerState<_PointForecastPanel> {
   /// 0으로 리셋되면서 보고 있던 날짜 위치가 처음으로 튕겨나가는 문제를 막는다.
   MarineForecast? _lastForecast;
 
-  /// [steps] 중 현재 시각과 가장 가까운 칸의 인덱스.
+  /// [steps] 중 현재 시각(서울 기준)과 가장 가까운 칸의 인덱스.
   int _closestToNow(List<HourlyMarine> steps) {
-    final now = DateTime.now();
+    final now = nowKst();
     var best = 0;
     var bestDiff = const Duration(days: 999);
     for (var k = 0; k < steps.length; k++) {
@@ -1135,7 +1329,7 @@ class _PointForecastPanelState extends ConsumerState<_PointForecastPanel> {
   }
 
   static const double _colW = 46;
-  static const double _labelW = 62;
+  static const double _labelW = 68;
   static const double _dayH = 22;
   static const double _timeH = 20;
   static const double _cellH = 23;
@@ -1188,148 +1382,180 @@ class _PointForecastPanelState extends ConsumerState<_PointForecastPanel> {
   Widget build(BuildContext context) {
     final forecastAsync = ref.watch(marineForecastProvider(widget.location));
     final scheme = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 16)],
+    // 흰 박스 대신 어두운 반투명 스크림(윈디식)에 흰 글씨로. 표 안의 기본
+    // 글씨색이 지도 위에서 안 보이지 않도록 이 패널만 흰색 텍스트 테마로 감싼다
+    // (색칠된 셀 글씨는 셀별로 대비색을 계산하므로 그대로 잘 보인다).
+    return Theme(
+      data: Theme.of(context).copyWith(
+        textTheme: Theme.of(
+          context,
+        ).textTheme.apply(bodyColor: Colors.white, displayColor: Colors.white),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-              child: Row(
-                children: [
-                  Icon(Icons.location_on, size: 18, color: scheme.primary),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      '상세 예보  ·  ${widget.location.name}',
-                      style: Theme.of(context).textTheme.titleSmall,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.close),
-                    tooltip: '지도로 돌아가기',
-                    onPressed: widget.onClose,
-                  ),
-                ],
-              ),
-            ),
-            Builder(
-              builder: (context) {
-                // 지점 변경 재로딩 중에도 직전 예보를 유지해 표가 사라지지
-                // 않게 한다(표를 스피너로 바꾸면 스크롤이 0으로 리셋된다).
-                final forecast = forecastAsync.valueOrNull ?? _lastForecast;
-                if (forecastAsync.hasValue) _lastForecast = forecastAsync.value;
-                if (forecast == null) {
-                  return Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: forecastAsync.hasError
-                        ? const Text('예보를 불러오지 못했습니다')
-                        : const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                  );
-                }
-                // 3시간 간격으로 향후 최대 16일(Open-Meteo 예보 상한)을 뽑는다.
-                final steps = [
-                  for (final h in forecast.hourly)
-                    if (h.time.hour % 3 == 0) h,
-                ].take(16 * 8).toList();
-                if (steps.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text('예보 데이터가 없습니다.'),
-                  );
-                }
-                _stepCount = steps.length;
-                final nowIdx = _closestToNow(steps);
-                // 진입 시 현재 시각과 가장 가까운 칸에 위치시키고 그리로 스크롤.
-                if (!_initialized) {
-                  _initialized = true;
-                  _i = nowIdx;
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) _scrollToSelected();
-                  });
-                }
-                final i = _i.clamp(0, steps.length - 1);
-                final at = steps[i];
-                final atIsNow = i == nowIdx;
-                // 지도 위 방향 나침반이 이 선택 시각을 반영하도록 전달한다.
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) widget.roseHour.value = at;
-                });
-                return Column(
+      child: Container(
+        decoration: const BoxDecoration(
+          // 표를 더 투명하게(기존의 절반 수준). 아래로 갈수록 살짝만 어둡게.
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0x590B1622), Color(0x800B1622)],
+          ),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                child: Row(
                   children: [
-                    // 상단 시간 슬라이더(그래픽 강화). 선택 시각을 크게 강조하고,
-                    // 현재 시각이면 "지금" 배지를 붙여 잘 보이게 한다.
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Row(
-                        children: [
-                          Icon(Icons.schedule, size: 18, color: scheme.primary),
-                          const SizedBox(width: 6),
-                          if (atIsNow)
-                            Container(
-                              margin: const EdgeInsets.only(right: 6),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: scheme.primary,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                '지금',
-                                style: TextStyle(
-                                  color: scheme.onPrimary,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          Text(
-                            '${formatMonthDay(at.time)} ${formatHm(at.time)}',
-                            style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Slider(
-                              value: i.toDouble(),
-                              min: 0,
-                              max: (steps.length - 1).toDouble(),
-                              onChanged: (v) {
-                                setState(() => _i = v.round());
-                                _scrollToSelected();
-                              },
-                            ),
-                          ),
-                        ],
+                    Icon(Icons.location_on, size: 18, color: scheme.primary),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      // 밝은 지도 위에서도 보이도록 밝은(너무 희지 않은) 회백색
+                      // + 그림자로. 검정 위 검정으로 안 보이던 문제 해결.
+                      child: Text(
+                        '상세 예보  ·  ${widget.location.name}',
+                        style: const TextStyle(
+                          color: Color(0xFFDCE3EA),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    _Meteogram(
-                      steps: steps,
-                      selected: i,
-                      nowIndex: nowIdx,
-                      controller: _hCtrl,
-                      onColumnTap: (j) => setState(() => _i = j),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+                      ),
+                      tooltip: '지도로 돌아가기',
+                      onPressed: widget.onClose,
                     ),
-                    const SizedBox(height: 4),
                   ],
-                );
-              },
-            ),
-          ],
+                ),
+              ),
+              Builder(
+                builder: (context) {
+                  // 지점 변경 재로딩 중에도 직전 예보를 유지해 표가 사라지지
+                  // 않게 한다(표를 스피너로 바꾸면 스크롤이 0으로 리셋된다).
+                  final forecast = forecastAsync.valueOrNull ?? _lastForecast;
+                  if (forecastAsync.hasValue) {
+                    _lastForecast = forecastAsync.value;
+                  }
+                  if (forecast == null) {
+                    return Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: forecastAsync.hasError
+                          ? const Text('예보를 불러오지 못했습니다')
+                          : const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                    );
+                  }
+                  // 3시간 간격으로 향후 최대 16일(Open-Meteo 예보 상한)을 뽑는다.
+                  final steps = [
+                    for (final h in forecast.hourly)
+                      if (h.time.hour % 3 == 0) h,
+                  ].take(16 * 8).toList();
+                  if (steps.isEmpty) {
+                    return const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('예보 데이터가 없습니다.'),
+                    );
+                  }
+                  _stepCount = steps.length;
+                  final nowIdx = _closestToNow(steps);
+                  // 진입 시 현재 시각과 가장 가까운 칸에 위치시키고 그리로 스크롤.
+                  if (!_initialized) {
+                    _initialized = true;
+                    _i = nowIdx;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _scrollToSelected();
+                    });
+                  }
+                  final i = _i.clamp(0, steps.length - 1);
+                  final at = steps[i];
+                  final atIsNow = i == nowIdx;
+                  // 지도 위 방향 나침반이 이 선택 시각을 반영하도록 전달한다.
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) widget.roseHour.value = at;
+                  });
+                  return Column(
+                    children: [
+                      // 상단 시간 슬라이더(그래픽 강화). 선택 시각을 크게 강조하고,
+                      // 현재 시각이면 "지금" 배지를 붙여 잘 보이게 한다.
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.schedule,
+                              size: 18,
+                              color: scheme.primary,
+                            ),
+                            const SizedBox(width: 6),
+                            if (atIsNow)
+                              Container(
+                                margin: const EdgeInsets.only(right: 6),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: scheme.primary,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '지금',
+                                  style: TextStyle(
+                                    color: scheme.onPrimary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            Text(
+                              '${formatMonthDay(at.time)} ${formatHm(at.time)}',
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Slider(
+                                value: i.toDouble(),
+                                min: 0,
+                                max: (steps.length - 1).toDouble(),
+                                onChanged: (v) {
+                                  setState(() => _i = v.round());
+                                  _scrollToSelected();
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _Meteogram(
+                        steps: steps,
+                        selected: i,
+                        nowIndex: nowIdx,
+                        controller: _hCtrl,
+                        onColumnTap: (j) => setState(() => _i = j),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1365,7 +1591,10 @@ class _Meteogram extends StatelessWidget {
       '파력 kW/m',
       '수온 °C',
     ];
-    final labelStyle = Theme.of(context).textTheme.bodySmall;
+    // 단위(m/s 등)까지 잘리지 않도록 라벨 글씨를 조금 작게 한다.
+    final labelStyle = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(fontSize: 10.5);
     final totalH =
         _PointForecastPanelState._dayH +
         _PointForecastPanelState._timeH +
@@ -1388,10 +1617,20 @@ class _Meteogram extends StatelessWidget {
                         ? _PointForecastPanelState._timeH
                         : _PointForecastPanelState._cellH,
                     child: Padding(
-                      padding: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.only(right: 6),
                       child: Align(
                         alignment: Alignment.centerRight,
-                        child: Text(rows[r], style: labelStyle),
+                        // 혹시 더 긴 라벨이 와도 잘리지 않게 오른쪽 정렬로 축소.
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            rows[r],
+                            maxLines: 1,
+                            textAlign: TextAlign.right,
+                            style: labelStyle,
+                          ),
+                        ),
                       ),
                     ),
                   ),

@@ -108,6 +108,15 @@ class _DayContent extends StatelessWidget {
       precipProbPct: rep.precipProbPct,
     );
 
+    // 선택 날짜의 일별 요약(일출/일몰·자외선). 예보 범위 밖이면 null.
+    WeatherDay? day;
+    for (final d in forecast.daily) {
+      if (DateUtils.isSameDay(d.date, date)) {
+        day = d;
+        break;
+      }
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -116,6 +125,8 @@ class _DayContent extends StatelessWidget {
         _OutfitCard(text: outfit, tempC: rep.tempC),
         const SizedBox(height: 12),
         _WindTimelineCard(hours: hours),
+        const SizedBox(height: 12),
+        _RoundConditionCard(day: day, humidityPct: rep.humidityPct),
         if (course != null && course!.address.isNotEmpty) ...[
           const SizedBox(height: 12),
           _CourseInfoCard(course: course!),
@@ -359,6 +370,66 @@ class _WindTimelineCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// 라운드 컨디션: 일출·일몰(티오프/막차 참고), 자외선, 습도.
+class _RoundConditionCard extends StatelessWidget {
+  const _RoundConditionCard({required this.day, required this.humidityPct});
+
+  final WeatherDay? day;
+  final int humidityPct;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final items = <(IconData, String, String)>[
+      if (day?.sunrise != null)
+        (Icons.wb_twilight, '일출', formatHm(day!.sunrise!)),
+      if (day?.sunset != null)
+        (Icons.nights_stay_outlined, '일몰', formatHm(day!.sunset!)),
+      if (day != null) (Icons.wb_sunny_outlined, '자외선', _uvLabel(day!.uvMax)),
+      (Icons.water_drop_outlined, '습도', '$humidityPct%'),
+    ];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          for (final (icon, label, value) in items)
+            Column(
+              children: [
+                Icon(icon, size: 20, color: scheme.primary),
+                const SizedBox(height: 4),
+                Text(value, style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  static String _uvLabel(double uv) {
+    final level = uv <= 2
+        ? '낮음'
+        : uv <= 5
+        ? '보통'
+        : uv <= 7
+        ? '높음'
+        : uv <= 10
+        ? '매우높음'
+        : '위험';
+    return '${uv.round()} $level';
   }
 }
 

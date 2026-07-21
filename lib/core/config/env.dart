@@ -21,6 +21,14 @@ class Env {
   /// 실제 API 대신 목 데이터를 사용할지 여부. 키가 없으면 자동으로 목 사용.
   static bool get useMockData => dataGoKrApiKey.isEmpty && khoaApiKey.isEmpty;
 
+  /// 지도용 바람장 격자 데이터(서버가 미리 뽑아 둔 정적 파일) URL.
+  ///
+  /// 비어 있으면(기본) 앱이 Open-Meteo를 직접 호출해 바람장을 만든다. 나중에
+  /// GitHub Actions 크론으로 `wind_field.json.gz`를 릴리스에 올리는 구조를 붙이면
+  /// 이 값을 그 릴리스 URL로 채운다(사용자 기기의 Open-Meteo 다지점 호출 회피).
+  /// `--dart-define=WIND_DATA_URL=...` 로 재정의 가능.
+  static const windDataUrl = String.fromEnvironment('WIND_DATA_URL');
+
   /// 강제 업데이트 게이트 설정(JSON)을 받아오는 URL.
   ///
   /// 무료 버전 배포 후 광고 버전으로 전환할 때, 이 URL이 가리키는 JSON 파일의

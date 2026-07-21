@@ -24,15 +24,20 @@ class WeatherHour {
   final double windGustMs;
   final double windDirDeg;
 
-  WeatherHour copyWith({double? tempC, int? weatherCode}) => WeatherHour(
+  WeatherHour copyWith({
+    double? tempC,
+    int? weatherCode,
+    double? windSpeedMs,
+    double? windDirDeg,
+  }) => WeatherHour(
     time: time,
     tempC: tempC ?? this.tempC,
     weatherCode: weatherCode ?? this.weatherCode,
     precipProbPct: precipProbPct,
     humidityPct: humidityPct,
-    windSpeedMs: windSpeedMs,
+    windSpeedMs: windSpeedMs ?? this.windSpeedMs,
     windGustMs: windGustMs,
-    windDirDeg: windDirDeg,
+    windDirDeg: windDirDeg ?? this.windDirDeg,
   );
 
   Map<String, dynamic> toJson() => {

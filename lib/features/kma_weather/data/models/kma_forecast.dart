@@ -8,6 +8,7 @@ class KmaHourly {
     required this.popPercent,
     required this.humidityPercent,
     required this.windSpeedMs,
+    this.windDirDeg,
   });
 
   final DateTime time;
@@ -24,6 +25,9 @@ class KmaHourly {
   final int humidityPercent;
   final double windSpeedMs;
 
+  /// 풍향(0~360°, 기상 관례=불어오는 방향). 기상청 VEC 값. 응답에 없으면 null.
+  final double? windDirDeg;
+
   Map<String, dynamic> toJson() => {
     'time': time.toIso8601String(),
     'tempC': tempC,
@@ -32,6 +36,7 @@ class KmaHourly {
     'popPercent': popPercent,
     'humidityPercent': humidityPercent,
     'windSpeedMs': windSpeedMs,
+    'windDirDeg': windDirDeg,
   };
 
   factory KmaHourly.fromJson(Map<String, dynamic> json) => KmaHourly(
@@ -42,6 +47,7 @@ class KmaHourly {
     popPercent: json['popPercent'] as int,
     humidityPercent: json['humidityPercent'] as int,
     windSpeedMs: (json['windSpeedMs'] as num).toDouble(),
+    windDirDeg: (json['windDirDeg'] as num?)?.toDouble(),
   );
 }
 

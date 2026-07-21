@@ -114,16 +114,16 @@ const _stopB = <int>[
   );
 }
 
-/// windy.com 기본 그라데이션은 중간 풍속대(카키·갈색)가 탁해 보여 실제
-/// Windy 앱보다 색이 약하게 느껴진다. 색상(hue)은 그대로 두고 채도·명도만
-/// 살짝 끌어올려 초록·노랑·주황이 또렷하게 살아나게 한다(윈디 앱 느낌).
+/// 실제 Windy 앱은 전체적으로 **약간 어두운(가라앉은) 색감**이다(계산대 녹색·
+/// 파랑이 밝게 튀지 않는다). 색상(hue)은 그대로 두고 채도는 살짝만 올리되
+/// **명도를 낮춰(×0.8)** 초록·파랑을 조금 어둡게 해 Windy와 톤을 맞춘다.
 (int r, int g, int b) _vivid(double rf, double gf, double bf) {
   final hsv = HSVColor.fromColor(
     Color.fromARGB(255, rf.round(), gf.round(), bf.round()),
   );
   final c = hsv
-      .withSaturation((hsv.saturation * 1.32).clamp(0.0, 1.0))
-      .withValue((hsv.value * 1.06).clamp(0.0, 1.0))
+      .withSaturation((hsv.saturation * 1.15).clamp(0.0, 1.0))
+      .withValue((hsv.value * 0.88).clamp(0.0, 1.0))
       .toColor();
   return ((c.r * 255).round(), (c.g * 255).round(), (c.b * 255).round());
 }
@@ -135,10 +135,12 @@ Color windSpeedColor(double speedMs) {
 
 /// [field]를 풍속 기준 색상 래스터([width]×[height])로 구운 이미지를 만든다.
 /// 매 프레임이 아니라 필드(시간대)가 바뀔 때만 호출해야 한다.
+/// 해상도는 격자(약 1.4° 간격)를 부드럽게 보간해 색 경계가 세밀하게 보이는
+/// 정도로 잡는다(픽셀당 약 0.2°).
 Future<ui.Image> buildWindHeatmapImage(
   WindField field, {
-  int width = 144,
-  int height = 108,
+  int width = 216,
+  int height = 162,
 }) {
   final buffer = Uint8List(width * height * 4);
   var idx = 0;

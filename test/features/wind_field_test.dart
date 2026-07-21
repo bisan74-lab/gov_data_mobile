@@ -75,17 +75,18 @@ void main() {
       const lonSteps = OpenMeteoWindFieldRepository.lonSteps;
       final total = latSteps * lonSteps;
 
+      // 격자는 배치(≤100좌표)로 나뉘어 여러 번 요청되고 순서대로 합쳐진다.
       final client = MockClient((request) async {
         expect(request.url.host, 'api.open-meteo.com');
         expect(request.url.path, '/v1/forecast');
         final lats = request.url.queryParameters['latitude']!.split(',');
         final lons = request.url.queryParameters['longitude']!.split(',');
-        expect(lats, hasLength(total));
-        expect(lons, hasLength(total));
+        expect(lats.length, lons.length);
+        expect(lats.length, lessThanOrEqualTo(100)); // 한 요청은 배치 크기 이하
         expect(request.url.queryParameters['wind_speed_unit'], 'ms');
 
         final list = List.generate(
-          total,
+          lats.length,
           (i) => {
             'current': {
               'time': '2026-07-16T09:00',
@@ -128,17 +129,20 @@ void main() {
       final total = latSteps * lonSteps;
       const hours = 6;
 
+      // 격자는 배치(≤100좌표)로 나뉘어 여러 번 요청되고 순서대로 합쳐진다.
       final client = MockClient((request) async {
         expect(
           request.url.queryParameters['hourly'],
           contains('wind_speed_10m'),
         );
+        final lats = request.url.queryParameters['latitude']!.split(',');
+        expect(lats.length, lessThanOrEqualTo(100));
         final times = List.generate(
           24,
           (h) => '2026-07-16T${h.toString().padLeft(2, '0')}:00',
         );
         final list = List.generate(
-          total,
+          lats.length,
           (i) => {
             'hourly': {
               'time': times,
@@ -164,6 +168,41 @@ void main() {
       }
       expect(series.at(0).time, series.hourly.first.time);
       expect(series.at(9999).time, series.hourly.last.time); // 범위 밖은 끝 고정
+    });
+
+    test('fetchPointSeries는 지점 좌표를 그대로 요청해 시간별 바람을 준다', () async {
+      final client = MockClient((request) async {
+        // 격자 배치가 아니라 탭한 좌표 하나를 그대로 요청한다.
+        expect(request.url.queryParameters['latitude'], '36.2500');
+        expect(request.url.queryParameters['longitude'], '126.0800');
+        expect(
+          request.url.queryParameters['hourly'],
+          contains('wind_speed_10m'),
+        );
+        final times = List.generate(
+          24,
+          (h) => '2026-07-20T${h.toString().padLeft(2, '0')}:00',
+        );
+        return http.Response(
+          jsonEncode({
+            'hourly': {
+              'time': times,
+              'wind_speed_10m': List.filled(24, 8.0),
+              'wind_direction_10m': List.filled(24, 180.0),
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+
+      final repo = OpenMeteoWindFieldRepository(client: client);
+      final list = await repo.fetchPointSeries(36.25, 126.08);
+
+      expect(list, hasLength(24));
+      expect(list.first.speedMs, closeTo(8, 1e-9));
+      expect(list.first.directionDeg, closeTo(180, 1e-9));
+      expect(list[23].time.hour, 23);
     });
   });
 

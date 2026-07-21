@@ -84,6 +84,9 @@ WeatherForecast _overlayKma(WeatherForecast base, KmaForecast kma) {
         h.copyWith(
           tempC: k.tempC,
           weatherCode: kmaToWmo(sky: k.skyCode, pty: k.ptyCode),
+          // 바람 특화: 근일 시간별 풍속(WSD)·풍향(VEC)을 기상청 값으로 덮어쓴다.
+          windSpeedMs: k.windSpeedMs,
+          windDirDeg: k.windDirDeg,
         )
       else
         h,
@@ -101,7 +104,8 @@ WeatherForecast _overlayKma(WeatherForecast base, KmaForecast kma) {
           humidityPct: kNow.humidityPercent,
           windSpeedMs: kNow.windSpeedMs,
           windGustMs: base.now.windGustMs,
-          windDirDeg: base.now.windDirDeg,
+          // 기상청 풍향(VEC)이 있으면 우선, 없으면 Open-Meteo 값 유지.
+          windDirDeg: kNow.windDirDeg ?? base.now.windDirDeg,
           uvIndex: base.now.uvIndex,
           visibilityKm: base.now.visibilityKm,
           feelsLikeC: base.now.feelsLikeC,
