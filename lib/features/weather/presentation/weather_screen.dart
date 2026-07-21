@@ -151,22 +151,20 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
     if (idx != _hourOffset) setState(() => _hourOffset = idx);
   }
 
-  // Windy처럼 가늘고 은은한 흐름선을 아주 촘촘하게: 개수를 1380으로 늘린다.
-  // 굵기·투명도는 페인터에서 더 얇고 투명하게 그린다.
-  static const _particleCount = 1380;
+  // Windy 화면녹화와 프레임 단위로 비교한 결과에 맞춘다: Windy는 **짧고 빠른**
+  // 흐름선이 **더 촘촘히** 흐른다. 개수를 1700으로 늘리고 궤적은 짧게 잡는다.
+  static const _particleCount = 1700;
   static const _maxAgeSeconds = 20.0;
 
-  /// 궤적 길이(포인트 수)를 풍속에 비례해 늘려, 바람이 셀수록 짧은 선 →
-  /// 조금 긴 흐름선으로 보이게 한다(윈디식 잔상). 개수를 크게 늘린 만큼
-  /// 성능(프레임당 drawLine 수 = 파티클수 × 궤적)을 위해 궤적 길이는 짧게
-  /// 유지한다(파티클 레이어만 RepaintBoundary로 다시 그린다). 잔상을 0.8배로.
-  static const _minTrail = 13;
-  static const _maxTrailCap = 67;
-  static const _trailSpeedFactor = 4.8;
+  /// 궤적 길이(포인트 수)를 풍속에 비례해 늘린다(윈디식 잔상). Windy처럼 짧게
+  /// (최대 34) 잡아 짧고 빠른 흐름선이 많이 흐르는 느낌을 낸다.
+  static const _minTrail = 9;
+  static const _maxTrailCap = 34;
+  static const _trailSpeedFactor = 3.0;
 
   /// 위경도 이동 배율(도/초 per m/s) — 화면 안 흐름선의 이동 "속도"를 정하는
-  /// 시각적 배율이며 실제 지리 이동 속도가 아니다. 이동 속도를 0.8배로 늦춘다.
-  static const _degreesPerMps = 0.144;
+  /// 시각적 배율이며 실제 지리 이동 속도가 아니다. Windy의 초당 화면변화에 맞춰 0.24.
+  static const _degreesPerMps = 0.24;
 
   @override
   void initState() {
@@ -220,11 +218,14 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
     final series = _series;
     if (series == null) return;
     final field = series.at(_hourOffset);
-    final dt = _lastElapsed == Duration.zero
+    var dt = _lastElapsed == Duration.zero
         ? 1 / 60
         : (elapsed - _lastElapsed).inMicroseconds / 1e6;
     _lastElapsed = elapsed;
-    if (dt <= 0 || dt > 0.25) return; // 첫 프레임/백그라운드 복귀 시 큰 점프 무시
+    if (dt <= 0) return;
+    // 스킵 대신 한 스텝 상한(0.05초)만 둬서, 느린 프레임/백그라운드 복귀에도
+    // 큰 점프 없이 조금씩이라도 계속 흐르게 한다(정지 방지).
+    if (dt > 0.05) dt = 0.05;
 
     for (var i = 0; i < _particles.length; i++) {
       final p = _particles[i];
@@ -260,6 +261,11 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
   @override
   Widget build(BuildContext context) {
     final seriesAsync = ref.watch(windFieldSeriesProvider);
+
+    // 다른 탭(홈 등)에서 골프장을 바꾸면 Windy 지도도 그 골프장으로 이동시킨다.
+    ref.listen(selectedLocationProvider, (prev, next) {
+      if (prev?.id != next.id) _focusTarget.value = next;
+    });
 
     // back 키: 상세 예보가 열려 있으면 먼저 지도로 돌아간다(앱 종료 대신).
     return PopScope(
@@ -504,6 +510,16 @@ class _WindMapAreaState extends State<_WindMapArea> {
       ..scale(s);
   }
 
+  /// 현재 선택된 골프장의 (위도, 경도) — 진입 시 지도를 여기에 고정한다.
+  (double lat, double lon)? _selectedCourseLatLon() {
+    final id = widget.selectedCourseId;
+    if (id == null) return null;
+    for (final c in widget.courses) {
+      if (c.id == id) return (c.latitude, c.longitude);
+    }
+    return null;
+  }
+
   void _onTransformChanged() {
     final newScale = _transformController.value.getMaxScaleOnAxis();
     if ((newScale - _scale).abs() > 0.02) {
@@ -588,12 +604,14 @@ class _WindMapAreaState extends State<_WindMapArea> {
               maxLon: field.maxLon,
             ),
           );
-          // 진입 시 남한을 화면 중앙에 두고 1.5배 확대해서 시작한다.
+          // 진입 시 **선택된 골프장**을 화면 중앙에 두고 확대해서 시작한다
+          // (골프장이 목록에 없으면 남한 중앙으로 폴백).
           if (!_didInitTransform) {
             _didInitTransform = true;
-            final kx = projection.x(127.8); // 남한 중앙 경도
-            final ky = projection.y(36.3); // 남한 중앙 위도
-            const s = 2.1;
+            final sel = _selectedCourseLatLon();
+            final kx = projection.x(sel?.$2 ?? 127.8);
+            final ky = projection.y(sel?.$1 ?? 36.3);
+            final s = sel != null ? 7.0 : 2.1;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
               _transformController.value = Matrix4.identity()
@@ -613,8 +631,8 @@ class _WindMapAreaState extends State<_WindMapArea> {
             // 세로 팬이 잠기는데(표가 떴을 때 아래로 못 내려가던 원인), 1.15면
             // 항상 약간의 팬 여유가 생겨 잠기지 않으면서도 검은 여백은 없다.
             minScale: 1.15,
-            // 섬·소지역 이름까지 보이도록 더 깊게 확대할 수 있게 한다.
-            maxScale: 21,
+            // 섬·소지역 이름·작은 섬까지 보이도록 더 깊게 확대할 수 있게 한다.
+            maxScale: 42,
             // 지도가 항상 뷰를 덮으므로 경계 여백은 두지 않는다(가장자리에 검은
             // 빈 부분이 올라오지 않게 한다).
             boundaryMargin: EdgeInsets.zero,
