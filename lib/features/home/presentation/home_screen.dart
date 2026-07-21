@@ -133,9 +133,10 @@ class _DayContent extends StatelessWidget {
 
   WeatherHour? _representative(List<WeatherHour> hours) {
     if (hours.isEmpty) return null;
-    final sorted = [...hours]..sort(
-      (a, b) => (a.time.hour - 12).abs().compareTo((b.time.hour - 12).abs()),
-    );
+    final sorted = [...hours]
+      ..sort(
+        (a, b) => (a.time.hour - 12).abs().compareTo((b.time.hour - 12).abs()),
+      );
     return sorted.first;
   }
 

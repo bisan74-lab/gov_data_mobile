@@ -335,9 +335,9 @@ class _HourlyStrip extends StatelessWidget {
                 ),
                 Text(
                   '${h.windSpeedMs.toStringAsFixed(0)}m/s',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600),
                 ),
               ],
             ),
