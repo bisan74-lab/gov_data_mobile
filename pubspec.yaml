@@ -1,0 +1,36 @@
+name: golf_windy
+description: "전국 골프장 시간대별 바람·날씨 예보 - 골프윈디 (GolfWindy)"
+publish_to: 'none'
+
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.6.1
+  geolocator: ^13.0.1
+  http: ^1.2.2
+  intl: ^0.20.2
+  shared_preferences: ^2.3.2
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter:
+  uses-material-design: true
+
+# 런처 아이콘 생성: dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: false # iOS 확장 시 true로 변경
+  image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#0b3d1f"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"

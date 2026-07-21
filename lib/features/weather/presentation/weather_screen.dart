@@ -1,0 +1,1589 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/utils/formatters.dart';
+import '../../golf/data/models/golf_course.dart';
+import '../../golf/presentation/providers.dart';
+import '../../golf/presentation/widgets/golf_marker_layer.dart';
+import '../../golf/presentation/widgets/golf_search_sheet.dart';
+import '../../locations/data/models/sea_location.dart';
+import '../../locations/presentation/providers.dart';
+import '../../locations/presentation/widgets/region_selector_action.dart';
+import '../../kma_weather/presentation/widgets/weather_icon.dart';
+import '../data/models/marine_weather.dart';
+import '../data/models/wind_field.dart';
+import 'providers.dart';
+import 'wind_field_providers.dart';
+import 'widgets/coastline_painter.dart';
+import 'widgets/map_city_labels.dart';
+import 'widgets/map_projection.dart';
+import 'widgets/wind_arrow.dart';
+import 'widgets/wind_heatmap.dart';
+import 'widgets/wind_map_painter.dart';
+
+/// 바람·해양 날씨 화면 (윈디 영역).
+///
+/// 진입 시 지도만 전체 화면으로 보인다(핀치 줌 가능). 지도를 탭하면 그 지점에
+/// 핀이 꽂히고, 상단에 그 지점의 바람 세기·방향과 "상세 예보" 버튼이 뜬다.
+/// "상세 예보"를 누르면 하단에 임의 좌표의 시간별 예보 표(forecast at this
+/// point)가 펼쳐지고, 지도의 그 지점에는 방향 나침반(WIND/SWELL/SWELL2)이
+/// 그려진다. back 키를 누르면 표를 닫고 지도로 돌아간다.
+class WeatherScreen extends ConsumerStatefulWidget {
+  const WeatherScreen({super.key});
+
+  @override
+  ConsumerState<WeatherScreen> createState() => _WeatherScreenState();
+}
+
+class _WeatherScreenState extends ConsumerState<WeatherScreen>
+    with SingleTickerProviderStateMixin {
+  late final Ticker _ticker;
+  Duration _lastElapsed = Duration.zero;
+  final _random = math.Random();
+  final List<WindParticle> _particles = [];
+
+  /// 파티클 애니메이션 전용 리페인트 신호. 매 프레임 이 값만 올려
+  /// **바람 레이어만** 다시 그리고, 위젯 트리 전체를 rebuild하지 않는다
+  /// (60fps setState는 지도·해안선·라벨까지 매 프레임 재구성해 프레임을
+  /// 떨어뜨리고 ANR로 앱이 종료됐다).
+  final ValueNotifier<int> _repaint = ValueNotifier(0);
+
+  /// 예보 표에서 선택 중인 시각의 해양값 — 지도 위 방향 나침반과 공유하고,
+  /// 지도 바람장(히트맵·파티클)도 이 시각을 따라간다.
+  final ValueNotifier<HourlyMarine?> _roseHour = ValueNotifier(null);
+  WindFieldSeries? _series;
+
+  /// 지도에 그릴 바람장 시각 인덱스. 기본은 현재 시각이고, 상세 예보의
+  /// 슬라이더로 시각을 고르면 지도도 그 시각의 바람으로 바뀐다(윈디처럼).
+  int _hourOffset = 0;
+
+  /// 상세 예보로 켜진 지점. null이면 지도 모드(하단 표 없음).
+  SeaLocation? _forecastPoint;
+
+  /// 지도에서 탭한 커서 좌표. null이면 아직 안 찍음(진입 시 지도만 보인다).
+  double? _cursorLat;
+  double? _cursorLon;
+
+  /// 골프장 검색/마커 탭 시 지도를 그 골프장으로 이동시키라는 신호.
+  final ValueNotifier<SeaLocation?> _focusTarget = ValueNotifier(null);
+
+  /// 돋보기: 골프장 이름 검색 → 선택하면 지도를 그 골프장으로 이동·핀 표시.
+  Future<void> _openSearch() async {
+    final courses = ref.read(golfCoursesProvider);
+    final picked = await showGolfSearchSheet(context, courses);
+    if (picked == null || !mounted) return;
+    _selectCourse(picked);
+  }
+
+  /// 지도 마커 탭 시 골프장 선택 + 이동 + 커서 핀(→ "상세 예보" 진입 가능).
+  void _selectCourse(GolfCourse course) {
+    final loc = course.toLocation();
+    ref.read(selectedLocationProvider.notifier).select(loc);
+    _focusTarget.value = loc;
+    _onPick(loc.latitude, loc.longitude);
+  }
+
+  void _onPick(double lat, double lon) {
+    setState(() {
+      _cursorLat = lat;
+      _cursorLon = lon;
+      // 상세 예보가 열려 있으면 그 지점으로 실시간 갱신(날짜 위치는 패널이 유지).
+      if (_forecastPoint != null) {
+        _forecastPoint = pointSeaLocation(lat, lon);
+      }
+    });
+  }
+
+  void _openDetail() {
+    final lat = _cursorLat;
+    final lon = _cursorLon;
+    if (lat == null || lon == null) return;
+    setState(() => _forecastPoint = pointSeaLocation(lat, lon));
+  }
+
+  void _closeDetail() {
+    _roseHour.value = null;
+    setState(() {
+      _forecastPoint = null;
+      // 표를 닫으면 지도를 다시 현재 시각 바람으로 되돌린다.
+      final series = _series;
+      if (series != null) {
+        _hourOffset = series.indexClosestTo(DateTime.now());
+      }
+    });
+  }
+
+  /// 지도 모드 하단 슬라이더로 바람장 시각을 바꾼다.
+  void _setMapHour(int idx) {
+    if (idx != _hourOffset) setState(() => _hourOffset = idx);
+  }
+
+  /// 지도 시각을 다시 "지금"으로 되돌린다.
+  void _mapHourToNow() {
+    final series = _series;
+    if (series == null) return;
+    final idx = series.indexClosestTo(DateTime.now());
+    if (idx != _hourOffset) setState(() => _hourOffset = idx);
+  }
+
+  static const _particleCount = 230;
+  static const _maxAgeSeconds = 24.0;
+
+  /// 궤적 길이(포인트 수)를 풍속에 비례해 늘려, 바람이 셀수록 흰 점이
+  /// 짧은 선 → 조금 긴 선 → 아주 긴 흐름선으로 보이게 한다(윈디식 잔상).
+  /// Windy 앱처럼 올챙이 꼬리가 길고 또렷하게 남도록 최소·최대 길이와 풍속
+  /// 비례 계수를 모두 키웠다. 성능(프레임당 drawLine 수 = 파티클수 × 궤적)은
+  /// 파티클 레이어만 RepaintBoundary로 다시 그려 감당한다.
+  static const _minTrail = 34;
+  static const _maxTrailCap = 185;
+  static const _trailSpeedFactor = 11.0;
+
+  /// 위경도 이동 배율(도/초 per m/s) — 화면 안 흐름선의 이동 "속도"를 정하는
+  /// 시각적 배율이며 실제 지리 이동 속도가 아니다. Windy에 맞춰 0.18로 둔다.
+  static const _degreesPerMps = 0.18;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = createTicker(_onTick);
+    _roseHour.addListener(_syncMapHour);
+  }
+
+  /// 상세 예보 슬라이더가 고른 시각으로 지도 바람장을 맞춘다.
+  void _syncMapHour() {
+    final series = _series;
+    final hour = _roseHour.value;
+    if (series == null || hour == null) return;
+    final idx = series.indexClosestTo(hour.time);
+    if (idx != _hourOffset && mounted) {
+      setState(() => _hourOffset = idx);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    _repaint.dispose();
+    _roseHour.removeListener(_syncMapHour);
+    _roseHour.dispose();
+    _focusTarget.dispose();
+    super.dispose();
+  }
+
+  void _ensureSeeded(WindFieldSeries series) {
+    if (_series != null) return;
+    _series = series;
+    // 시계열은 오늘 0시부터 시작하므로, 지도 기본 시각을 "지금"에 맞춘다.
+    _hourOffset = series.indexClosestTo(DateTime.now());
+    final field = series.at(_hourOffset);
+    _particles
+      ..clear()
+      ..addAll(List.generate(_particleCount, (_) => _spawnParticle(field)));
+    _ticker.start();
+  }
+
+  WindParticle _spawnParticle(WindField field) => WindParticle(
+    lat: field.minLat + _random.nextDouble() * (field.maxLat - field.minLat),
+    lon: field.minLon + _random.nextDouble() * (field.maxLon - field.minLon),
+    age: _random.nextDouble() * _maxAgeSeconds,
+    trail: [],
+  );
+
+  void _onTick(Duration elapsed) {
+    final series = _series;
+    if (series == null) return;
+    final field = series.at(_hourOffset);
+    final dt = _lastElapsed == Duration.zero
+        ? 1 / 60
+        : (elapsed - _lastElapsed).inMicroseconds / 1e6;
+    _lastElapsed = elapsed;
+    if (dt <= 0 || dt > 0.25) return; // 첫 프레임/백그라운드 복귀 시 큰 점프 무시
+
+    for (var i = 0; i < _particles.length; i++) {
+      final p = _particles[i];
+      final uv = field.sample(p.lat, p.lon);
+      if (uv == null) {
+        _particles[i] = _spawnParticle(field);
+        continue;
+      }
+      final (u, v) = uv;
+      final speed = math.sqrt(u * u + v * v);
+      p.lat += v * _degreesPerMps * dt;
+      p.lon += u * _degreesPerMps * dt;
+      p.age += dt;
+
+      final nx = (p.lon - field.minLon) / (field.maxLon - field.minLon);
+      final ny = 1 - (p.lat - field.minLat) / (field.maxLat - field.minLat);
+      p.trail.add(Offset(nx, ny));
+      final maxTrail = (_minTrail + speed * _trailSpeedFactor)
+          .clamp(_minTrail, _maxTrailCap)
+          .round();
+      while (p.trail.length > maxTrail) {
+        p.trail.removeAt(0);
+      }
+
+      if (p.age > _maxAgeSeconds || !field.contains(p.lat, p.lon)) {
+        _particles[i] = _spawnParticle(field);
+      }
+    }
+    // 위젯 트리 전체를 rebuild하지 않고 바람 레이어만 다시 그린다.
+    _repaint.value++;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final seriesAsync = ref.watch(windFieldSeriesProvider);
+
+    // back 키: 상세 예보가 열려 있으면 먼저 지도로 돌아간다(앱 종료 대신).
+    return PopScope(
+      canPop: _forecastPoint == null,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _forecastPoint != null) _closeDetail();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Windy(윈디)'),
+          actions: [
+            IconButton(
+              tooltip: '골프장 검색',
+              icon: const Icon(Icons.search),
+              onPressed: _openSearch,
+            ),
+            const RegionSelectorAction(),
+          ],
+        ),
+        body: seriesAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (e, _) => Center(child: Text('바람장을 불러오지 못했습니다: $e')),
+          data: (series) {
+            _ensureSeeded(series);
+            final field = series.at(_hourOffset);
+
+            // 커서(탭한 지점)의 바람 세기·방향(상단 표시용). u/v는 흐름 방향
+            // 성분이므로, 불어오는 방향(기상 관례)은 atan2(-u,-v)로 되돌린다.
+            double? cSpeed;
+            double? cDir;
+            if (_cursorLat case final clat?) {
+              if (_cursorLon case final clon?) {
+                final uv = field.sample(clat, clon);
+                if (uv != null) {
+                  final (u, v) = uv;
+                  cSpeed = math.sqrt(u * u + v * v);
+                  cDir = (math.atan2(-u, -v) * 180 / math.pi + 360) % 360;
+                }
+              }
+            }
+
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: _WindMapArea(
+                    field: field,
+                    particles: _particles,
+                    repaint: _repaint,
+                    forecastPoint: _forecastPoint,
+                    roseHour: _roseHour,
+                    cursorLat: _cursorLat,
+                    cursorLon: _cursorLon,
+                    onPick: _onPick,
+                    onOpenDetail: _openDetail,
+                    courses: ref.watch(golfCoursesProvider),
+                    selectedCourseId: ref.watch(selectedLocationProvider).id,
+                    onTapCourse: _selectCourse,
+                    focusTarget: _focusTarget,
+                  ),
+                ),
+                // 상단: 상세 예보 진입 전, 커서 지점의 바람 세기·방향 + 진입 버튼.
+                if (_forecastPoint == null && cSpeed != null && cDir != null)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: _CursorWindBar(
+                      speed: cSpeed,
+                      dir: cDir,
+                      onDetail: _openDetail,
+                    ),
+                  ),
+                // 하단(지도 모드): 시간·날짜 슬라이더. 지도만 보이는 상태에서
+                // 바람장 시각을 윈디처럼 앞뒤로 스크럽한다.
+                if (_forecastPoint == null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _MapTimeBar(
+                      series: series,
+                      offset: _hourOffset,
+                      nowOffset: series.indexClosestTo(DateTime.now()),
+                      onChanged: _setMapHour,
+                      onNow: _mapHourToNow,
+                    ),
+                  ),
+                // 하단: 상세 예보 표(열렸을 때만).
+                if (_forecastPoint case final fp?)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _PointForecastPanel(
+                      location: fp,
+                      roseHour: _roseHour,
+                      onClose: _closeDetail,
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// 지도 영역: 풍속 색상 히트맵 + 파티클 흐름선 + 해안선 + 도시 라벨.
+/// 아무 곳이나 탭하면 그 지점에 핀이 꽂히고 "이 지점의 예보" 말풍선이
+/// 뜬다(윈디의 forecast at this point). 손가락으로 확대/축소·이동할 수
+/// 있고, 확대할수록 도시 이름이 더 많이 보인다.
+class _WindMapArea extends StatefulWidget {
+  const _WindMapArea({
+    required this.field,
+    required this.particles,
+    required this.repaint,
+    required this.forecastPoint,
+    required this.roseHour,
+    required this.cursorLat,
+    required this.cursorLon,
+    required this.onPick,
+    required this.onOpenDetail,
+    required this.courses,
+    required this.selectedCourseId,
+    required this.onTapCourse,
+    required this.focusTarget,
+  });
+
+  final WindField field;
+  final List<WindParticle> particles;
+
+  /// 매 프레임 파티클 레이어만 다시 그리게 하는 리페인트 신호.
+  final Listenable repaint;
+
+  /// 현재 예보 모드로 켜진 지점(있으면 그 지점에 방향 나침반을 그린다).
+  final SeaLocation? forecastPoint;
+
+  /// 방향 나침반에 표시할 현재 선택 시각의 해양값(예보 표와 공유).
+  final ValueNotifier<HourlyMarine?> roseHour;
+
+  /// 탭한 커서 좌표(상위 화면이 소유). null이면 아직 안 찍음.
+  final double? cursorLat;
+  final double? cursorLon;
+
+  /// 지도를 탭했을 때 커서 좌표를 알린다.
+  final void Function(double lat, double lon) onPick;
+
+  /// "상세 예보" 말풍선 → 커서 지점 예보 표로 진입.
+  final VoidCallback onOpenDetail;
+
+  /// 지도에 마커로 찍을 전국 골프장.
+  final List<GolfCourse> courses;
+
+  /// 현재 선택된 골프장 id(마커 강조·라벨 표시용).
+  final String? selectedCourseId;
+
+  /// 골프장 마커 탭 시 상위로 알린다(선택 + 이동).
+  final void Function(GolfCourse) onTapCourse;
+
+  /// 검색/선택으로 지도를 특정 골프장으로 이동시키라는 신호.
+  final ValueNotifier<SeaLocation?> focusTarget;
+
+  @override
+  State<_WindMapArea> createState() => _WindMapAreaState();
+}
+
+class _WindMapAreaState extends State<_WindMapArea> {
+  ui.Image? _heatmap;
+  DateTime? _heatmapTime;
+  final TransformationController _transformController =
+      TransformationController();
+  double _scale = 1.8;
+  bool _didInitTransform = false;
+
+  /// 마지막 레이아웃의 화면 크기·투영(검색 이동 시 재센터 계산에 쓴다).
+  Size? _lastScreen;
+  MapProjection? _lastProjection;
+
+  @override
+  void initState() {
+    super.initState();
+    _rebuildHeatmap();
+    _transformController.addListener(_onTransformChanged);
+    widget.focusTarget.addListener(_onFocusRequested);
+  }
+
+  /// 검색/마커 선택으로 지정된 골프장을 화면 중앙에 두고 확대한다.
+  void _onFocusRequested() {
+    final loc = widget.focusTarget.value;
+    final screen = _lastScreen;
+    final proj = _lastProjection;
+    if (loc == null || screen == null || proj == null) return;
+    final s = math.max(_scale, 6.0);
+    final kx = proj.x(loc.longitude);
+    final ky = proj.y(loc.latitude);
+    _transformController.value = Matrix4.identity()
+      ..translate(screen.width / 2 - s * kx, screen.height / 2 - s * ky)
+      ..scale(s);
+  }
+
+  void _onTransformChanged() {
+    final newScale = _transformController.value.getMaxScaleOnAxis();
+    if ((newScale - _scale).abs() > 0.02) {
+      setState(() => _scale = newScale);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _WindMapArea oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.field.time != _heatmapTime) {
+      _rebuildHeatmap();
+    }
+  }
+
+  Future<void> _rebuildHeatmap() async {
+    final field = widget.field;
+    final time = field.time;
+    final image = await buildWindHeatmapImage(field);
+    if (!mounted || widget.field.time != time) {
+      image.dispose();
+      return;
+    }
+    _heatmap?.dispose();
+    setState(() {
+      _heatmap = image;
+      _heatmapTime = time;
+    });
+  }
+
+  @override
+  void dispose() {
+    _transformController.removeListener(_onTransformChanged);
+    _transformController.dispose();
+    widget.focusTarget.removeListener(_onFocusRequested);
+    _heatmap?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final field = widget.field;
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF0B2A4A), Color(0xFF08182B)],
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final screen = constraints.biggest;
+          final heatmap = _heatmap;
+          // 실물 비율(위·경도 왜곡 보정): 위도 1° ≈ 경도 1°×cos(위도)이므로,
+          // 지도 캔버스의 가로:세로를 (경도폭×cos):(위도폭)로 잡아 세로로
+          // 늘어나 보이던 왜곡을 없앤다. 화면을 가득 덮도록(cover) 크기를 잡아
+          // 남는 한 방향은 넘쳐서(pan) 볼 수 있게 한다.
+          final centerLat = (mapViewBounds.minLat + mapViewBounds.maxLat) / 2;
+          final cosLat = math.cos(centerLat * math.pi / 180);
+          final lonSpan = mapViewBounds.maxLon - mapViewBounds.minLon;
+          final latSpan = mapViewBounds.maxLat - mapViewBounds.minLat;
+          final aspect = (lonSpan * cosLat) / latSpan; // 가로/세로
+          var mapW = screen.width;
+          var mapH = mapW / aspect;
+          if (mapH < screen.height) {
+            mapH = screen.height;
+            mapW = mapH * aspect;
+          }
+          final mapSize = Size(mapW, mapH);
+          // 모든 레이어가 같은 투영(mapSize 기준)을 공유해 서로 어긋나지 않는다.
+          final projection = MapProjection(mapViewBounds, mapSize);
+          // 검색 이동 시 재센터 계산에 쓰도록 최신 화면·투영을 저장.
+          _lastScreen = screen;
+          _lastProjection = projection;
+          final fieldRect = projection.rectFor(
+            LatLonBounds(
+              minLat: field.minLat,
+              maxLat: field.maxLat,
+              minLon: field.minLon,
+              maxLon: field.maxLon,
+            ),
+          );
+          // 진입 시 남한을 화면 중앙에 두고 1.5배 확대해서 시작한다.
+          if (!_didInitTransform) {
+            _didInitTransform = true;
+            final kx = projection.x(127.8); // 남한 중앙 경도
+            final ky = projection.y(36.3); // 남한 중앙 위도
+            const s = 1.8;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              _transformController.value = Matrix4.identity()
+                ..translate(
+                  screen.width / 2 - s * kx,
+                  screen.height / 2 - s * ky,
+                )
+                ..scale(s);
+            });
+          }
+          return InteractiveViewer(
+            transformationController: _transformController,
+            // 캔버스를 화면보다 크게(cover) 잡으므로 constrained를 끈다.
+            constrained: false,
+            minScale: 1,
+            // 섬·소지역 이름까지 보이도록 더 깊게 확대할 수 있게 한다.
+            maxScale: 21,
+            boundaryMargin: EdgeInsets.zero,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapUp: (details) {
+                final lat = projection.latFor(details.localPosition.dy);
+                final lon = projection.lonFor(details.localPosition.dx);
+                if (!field.contains(lat, lon)) return;
+                // 커서 좌표를 상위로 알린다. 상세 예보가 열려 있으면 상위에서
+                // 그 지점으로 실시간 갱신한다.
+                widget.onPick(lat, lon);
+              },
+              child: SizedBox(
+                width: mapSize.width,
+                height: mapSize.height,
+                child: Stack(
+                  children: [
+                    if (heatmap != null)
+                      CustomPaint(
+                        painter: WindHeatmapPainter(
+                          image: heatmap,
+                          dstRect: fieldRect,
+                        ),
+                        size: mapSize,
+                      ),
+                    // RepaintBoundary로 감싸지 않는다 — 감싸면 base 해상도로
+                    // 래스터화된 뒤 확대되어 흐려지고, 1/scale 두께가 사라진다.
+                    // 그냥 두면 InteractiveViewer의 변환 레이어가 벡터를 확대
+                    // 배율로 다시 그려 선이 선명하고, strokeWidth=0.6/scale이
+                    // 화면상 항상 얇게 유지된다. (파티클 레이어는 자체
+                    // RepaintBoundary가 있어 이 해안선은 매 프레임 다시 그려지지
+                    // 않는다.)
+                    CustomPaint(
+                      painter: CoastlinePainter(
+                        projection: projection,
+                        scale: _scale,
+                      ),
+                      size: mapSize,
+                    ),
+                    Positioned.fromRect(
+                      rect: fieldRect,
+                      // 파티클만 매 프레임 다시 그려지도록 경계를 둔다.
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: WindMapPainter(
+                            particles: widget.particles,
+                            // 순백이 아니라 살짝 흐린 회백색으로 은은하게.
+                            color: const Color(0xFFDCE6F0),
+                            repaint: widget.repaint,
+                          ),
+                          size: fieldRect.size,
+                        ),
+                      ),
+                    ),
+                    // 지도 앱처럼 도시 이름만 확대 단계별로 표시(항구 점 라벨은
+                    // 제거해 깔끔하게). 지역 선택은 우측 상단 지역 선택 버튼으로 한다.
+                    MapCityLabelLayer(projection: projection, scale: _scale),
+                    // 전국 골프장 마커(초록 점). 탭하면 선택 + 이동, 확대 시 이름 표시.
+                    GolfMarkerLayer(
+                      projection: projection,
+                      scale: _scale,
+                      courses: widget.courses,
+                      selectedId: widget.selectedCourseId,
+                      onTap: widget.onTapCourse,
+                    ),
+                    // 예보 표가 열려 있으면 그 지점에 윈디식 방향 나침반(로즈)을,
+                    // 아니면 탭한 지점에 "상세 예보" 말풍선을 띄운다.
+                    if (widget.forecastPoint case final fp?)
+                      ValueListenableBuilder<HourlyMarine?>(
+                        valueListenable: widget.roseHour,
+                        builder: (context, hour, _) => hour == null
+                            ? const SizedBox.shrink()
+                            : _ForecastRose(
+                                scale: _scale,
+                                left: projection.x(fp.longitude),
+                                top: projection.y(fp.latitude),
+                                hour: hour,
+                              ),
+                      )
+                    else if (widget.cursorLat case final plat?)
+                      if (widget.cursorLon case final plon?)
+                        Positioned(
+                          left: projection.x(plon),
+                          top: projection.y(plat),
+                          // 커서 핀. 확대해도 크기가 일정하도록 반대로 축소하고
+                          // 핀 끝(바닥 중앙)이 좌표에 오게 한다.
+                          child: FractionalTranslation(
+                            translation: const Offset(-0.5, -1),
+                            child: Transform.scale(
+                              scale: 1 / _scale,
+                              alignment: Alignment.bottomCenter,
+                              child: Icon(
+                                Icons.location_on,
+                                size: 36,
+                                color: Theme.of(context).colorScheme.primary,
+                                shadows: const [
+                                  Shadow(color: Colors.black54, blurRadius: 3),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// 상세 예보 진입 전, 지도 상단에 뜨는 커서 지점 요약 바: 바람 세기·방향
+/// 아이콘 + "상세 예보" 진입 버튼.
+class _CursorWindBar extends StatelessWidget {
+  const _CursorWindBar({
+    required this.speed,
+    required this.dir,
+    required this.onDetail,
+  });
+
+  final double speed;
+  final double dir;
+  final VoidCallback onDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+        child: Material(
+          color: scheme.surface,
+          elevation: 3,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                WindArrow(directionDeg: dir, size: 24, color: scheme.primary),
+                const SizedBox(width: 10),
+                Text(
+                  '${compassKo(dir)}\ud48d  ${formatWind(speed)}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const Spacer(),
+                FilledButton.tonalIcon(
+                  onPressed: onDetail,
+                  icon: const Icon(Icons.insights, size: 18),
+                  label: const Text('\uc0c1\uc138 \uc608\ubcf4'),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 지도 모드 하단에 붙는 윈디식 시간·날짜 스크러버. 슬라이더를 움직이면
+/// 지도 바람장 시각([offset])이 바뀌어 히트맵·흐름선이 그 시각의 바람으로
+/// 갱신된다. 현재 시각(now)에 "지금" 배지를 붙이고, ◀▶로 1시간씩 미세
+/// 조정하며, "지금" 버튼으로 현재 시각으로 되돌린다.
+class _MapTimeBar extends StatelessWidget {
+  const _MapTimeBar({
+    required this.series,
+    required this.offset,
+    required this.nowOffset,
+    required this.onChanged,
+    required this.onNow,
+  });
+
+  final WindFieldSeries series;
+  final int offset;
+  final int nowOffset;
+  final ValueChanged<int> onChanged;
+  final VoidCallback onNow;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final maxIdx = series.length - 1;
+    final i = offset.clamp(0, maxIdx);
+    final t = series.at(i).time;
+    final isNow = i == nowOffset;
+    // 현재 시각 대비 상대 표시(+N시간 / -N시간).
+    final diffH = i - nowOffset;
+    final rel = diffH == 0 ? '지금' : (diffH > 0 ? '+$diffH시간' : '$diffH시간');
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+        child: Material(
+          color: scheme.surface.withValues(alpha: 0.95),
+          elevation: 4,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 6, 2),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.schedule, size: 18, color: scheme.primary),
+                    const SizedBox(width: 6),
+                    if (isNow)
+                      Container(
+                        margin: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: scheme.primary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '지금',
+                          style: TextStyle(
+                            color: scheme.onPrimary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    Flexible(
+                      child: Text(
+                        '${formatMonthDay(t)}  ${formatHm(t)}',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (!isNow) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        rel,
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                    const Spacer(),
+                    TextButton(
+                      onPressed: isNow ? null : onNow,
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                      ),
+                      child: const Text('지금'),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.chevron_left),
+                      tooltip: '1시간 전',
+                      onPressed: i > 0 ? () => onChanged(i - 1) : null,
+                    ),
+                    Expanded(
+                      child: SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 3,
+                          overlayShape: const RoundSliderOverlayShape(
+                            overlayRadius: 14,
+                          ),
+                        ),
+                        child: Slider(
+                          value: i.toDouble(),
+                          min: 0,
+                          max: maxIdx.toDouble(),
+                          onChanged: (v) => onChanged(v.round()),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.chevron_right),
+                      tooltip: '1시간 후',
+                      onPressed: i < maxIdx ? () => onChanged(i + 1) : null,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 임의 좌표를 위한 즉석 [SeaLocation]. id를 반올림 좌표로 만들어
+/// 같은 지점을 다시 찍으면 예보 캐시가 재사용되게 한다.
+SeaLocation pointSeaLocation(double lat, double lon) {
+  final latR = lat.toStringAsFixed(3);
+  final lonR = lon.toStringAsFixed(3);
+  return SeaLocation(
+    id: 'pt_${latR}_$lonR',
+    name: '위도 $latR · 경도 $lonR',
+    region: '해상',
+    latitude: lat,
+    longitude: lon,
+  );
+}
+
+/// 선택 지점 위에 뜨는 윈디식 방향 나침반. 가운데 점을 중심으로 바람·너울·
+/// 너울2가 각자 진행 방향으로 뻗는 **가늘고 긴 색 막대**로 그리고, 글자를
+/// 막대 안에 넣어(작은 글씨) 막대끼리 가까워도 서로 가려지지 않게 한다.
+/// 지도를 확대해도 크기가 일정하도록 반대로 축소한다.
+class _ForecastRose extends StatelessWidget {
+  const _ForecastRose({
+    required this.scale,
+    required this.left,
+    required this.top,
+    required this.hour,
+  });
+
+  final double scale;
+  final double left;
+  final double top;
+  final HourlyMarine hour;
+
+  static const double _len = 84; // 막대 길이(중심→끝)
+  static const double _thick = 16; // 막대 두께(글자가 들어갈 만큼만)
+  static const double _d = 220; // 로즈 박스 한 변
+  static const Offset _c = Offset(_d / 2, _d / 2);
+
+  static const _windC = Color(0xFF3FB6DC);
+  static const _swellC = Color(0xFFEB963A);
+  static const _swell2C = Color(0xFF7CB342);
+
+  @override
+  Widget build(BuildContext context) {
+    final bars = <({double dir, Color color, String label, String value})>[
+      (
+        dir: hour.windDirectionDeg,
+        color: _windC,
+        label: '바람',
+        value: '${hour.windSpeedMs.round()}m/s',
+      ),
+      (
+        dir: hour.swellDirectionDeg,
+        color: _swellC,
+        label: '너울',
+        value:
+            '${hour.swellHeightM.toStringAsFixed(1)}m·${hour.swellPeriodS.round()}s',
+      ),
+      (
+        dir: hour.swell2DirectionDeg,
+        color: _swell2C,
+        label: '너울2',
+        value:
+            '${hour.swell2HeightM.toStringAsFixed(1)}m·${hour.swell2PeriodS.round()}s',
+      ),
+    ];
+    return Positioned(
+      left: left,
+      top: top,
+      child: FractionalTranslation(
+        translation: const Offset(-0.5, -0.5),
+        child: Transform.scale(
+          scale: 1 / scale,
+          alignment: Alignment.center,
+          child: SizedBox(
+            width: _d,
+            height: _d,
+            child: Stack(
+              children: [
+                CustomPaint(
+                  size: const Size(_d, _d),
+                  painter: _RoseRingPainter(center: _c),
+                ),
+                for (final b in bars) _bar(b.dir, b.color, b.label, b.value),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 진행(불어가는) 방향(dir+180)으로 뻗는 가늘고 긴 캡슐 막대. 글자를 막대
+  /// 안에 넣고, 막대가 어느 방향이든 글씨가 뒤집히지 않도록 캡슐 중심을
+  /// 축으로 필요하면 180° 돌려 항상 바로 읽히게 한다(막대 위치는 그대로).
+  Widget _bar(double dirDeg, Color color, String label, String value) {
+    final rad = (dirDeg + 180) * math.pi / 180;
+    final u = Offset(math.sin(rad), -math.cos(rad)); // 화면상 진행 방향 단위벡터
+    final mid = _c + u * (_len / 2); // 캡슐 중심(중심→끝 구간의 중점)
+    var angle = math.atan2(u.dy, u.dx); // 캡슐 장축의 화면 각도
+    // 글씨가 위를 향하도록: 왼쪽(cos<0)으로 향하면 같은 직선 위에서 180° 회전.
+    var flip = false;
+    if (math.cos(angle) < 0) {
+      angle += math.pi;
+      flip = true;
+    }
+    // 화살표 방향: 뒤집히지 않으면 막대의 바깥쪽(진행 방향)이 오른쪽, 뒤집히면
+    // 왼쪽이다. 뾰족한 끝(tip)이 항상 바깥(진행 방향)을 향하도록 화살표 모양을
+    // 좌우로 맞춘다.
+    final pointRight = !flip;
+    return Positioned(
+      left: mid.dx,
+      top: mid.dy,
+      child: FractionalTranslation(
+        translation: const Offset(-0.5, -0.5),
+        child: Transform.rotate(
+          angle: angle,
+          child: ClipPath(
+            clipper: _ArrowBarClipper(pointRight: pointRight),
+            child: Container(
+              width: _len,
+              height: _thick,
+              alignment: Alignment.center,
+              // 뾰족한 끝·홈이 글자를 가리지 않게 좌우 여백을 준다.
+              padding: const EdgeInsets.symmetric(horizontal: 11),
+              color: color,
+              // 뒤집힌 경우 라벨이 바깥쪽(tip)에 오도록 순서를 뒤집는다.
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  textDirection: flip ? TextDirection.rtl : TextDirection.ltr,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.bold,
+                        height: 1.0,
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      value,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w600,
+                        height: 1.0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 방향 막대의 화살표 모양: 한쪽 끝은 뾰족(tip), 반대쪽 끝은 화살 오늬처럼
+/// 안으로 파인 홈(notch). [pointRight]로 뾰족한 끝의 좌우를 정한다.
+class _ArrowBarClipper extends CustomClipper<Path> {
+  _ArrowBarClipper({required this.pointRight});
+
+  final bool pointRight;
+  static const double _tip = 9;
+  static const double _notch = 6;
+
+  @override
+  Path getClip(Size size) {
+    final w = size.width;
+    final h = size.height;
+    final p = Path();
+    if (pointRight) {
+      p
+        ..moveTo(0, 0)
+        ..lineTo(w - _tip, 0)
+        ..lineTo(w, h / 2) // 뾰족한 끝(오른쪽)
+        ..lineTo(w - _tip, h)
+        ..lineTo(0, h)
+        ..lineTo(_notch, h / 2) // 오늬 홈(왼쪽)
+        ..close();
+    } else {
+      p
+        ..moveTo(w, 0)
+        ..lineTo(_tip, 0)
+        ..lineTo(0, h / 2) // 뾰족한 끝(왼쪽)
+        ..lineTo(_tip, h)
+        ..lineTo(w, h)
+        ..lineTo(w - _notch, h / 2) // 오늬 홈(오른쪽)
+        ..close();
+    }
+    return p;
+  }
+
+  @override
+  bool shouldReclip(_ArrowBarClipper old) => old.pointRight != pointRight;
+}
+
+/// 나침반의 반투명 원 + 가운데 점만 그린다(막대는 위젯으로 얹는다).
+class _RoseRingPainter extends CustomPainter {
+  _RoseRingPainter({required this.center});
+
+  final Offset center;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawCircle(
+      center,
+      _ForecastRose._len,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.45)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+    canvas.drawCircle(center, 5, Paint()..color = Colors.white);
+    canvas.drawCircle(
+      center,
+      5,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.4)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_RoseRingPainter old) => old.center != center;
+}
+
+/// 파고/너울 높이(m) → 색상. 낮음(청록) → 높음(분홍/자주)으로 이어지는
+/// 윈디식 스케일. 바람은 [windSpeedColor]를 쓰고 파도 계열은 이 함수를 쓴다.
+Color waveHeightColor(double m) {
+  final t = (m / 3.0).clamp(0.0, 1.0);
+  return HSVColor.fromAHSV(1, 200 + 130 * t, 0.55, 0.9).toColor();
+}
+
+Color _readableOn(Color bg) =>
+    bg.computeLuminance() > 0.55 ? Colors.black87 : Colors.white;
+
+/// forecast at this point 패널. "이 지점의 예보"를 누르면 바로 뜨는 2주
+/// 시간별 색상 표(윈디식 메테오그램). 상단에 시간 슬라이더를 두어 그래픽을
+/// 강화하고, 표는 하단에 붙여 3시간 간격으로 향후 2주를 가로 스크롤로 본다.
+/// 바람·돌풍·파도·너울에 색을 입혀 세기를 직관적으로 느낄 수 있게 한다.
+class _PointForecastPanel extends ConsumerStatefulWidget {
+  const _PointForecastPanel({
+    required this.location,
+    required this.roseHour,
+    required this.onClose,
+  });
+
+  final SeaLocation location;
+
+  /// 선택 중인 시각의 해양값을 지도 위 방향 나침반에 전달하는 통로.
+  final ValueNotifier<HourlyMarine?> roseHour;
+  final VoidCallback onClose;
+
+  @override
+  ConsumerState<_PointForecastPanel> createState() =>
+      _PointForecastPanelState();
+}
+
+class _PointForecastPanelState extends ConsumerState<_PointForecastPanel> {
+  int _i = 0;
+  int _stepCount = 0;
+  bool _syncingFromSlider = false;
+  bool _initialized = false;
+  final ScrollController _hCtrl = ScrollController();
+
+  /// 지점을 바꿔 다시 로딩하는 동안에도 표를 그대로 유지하기 위해 직전
+  /// 예보를 붙잡아 둔다. 로딩 스피너로 표를 잠깐 없애면 스크롤 컨트롤러가
+  /// 0으로 리셋되면서 보고 있던 날짜 위치가 처음으로 튕겨나가는 문제를 막는다.
+  MarineForecast? _lastForecast;
+
+  /// [steps] 중 현재 시각과 가장 가까운 칸의 인덱스.
+  int _closestToNow(List<HourlyMarine> steps) {
+    final now = DateTime.now();
+    var best = 0;
+    var bestDiff = const Duration(days: 999);
+    for (var k = 0; k < steps.length; k++) {
+      final d = steps[k].time.difference(now).abs();
+      if (d < bestDiff) {
+        bestDiff = d;
+        best = k;
+      }
+    }
+    return best;
+  }
+
+  static const double _colW = 46;
+  static const double _labelW = 62;
+  static const double _dayH = 22;
+  static const double _timeH = 20;
+  static const double _cellH = 23;
+
+  /// 슬라이더가 표를 스크롤할 때 화면 왼쪽에서 선택 열까지 띄우는 여백(px).
+  static const double _selectPad = 120;
+
+  @override
+  void initState() {
+    super.initState();
+    _hCtrl.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _hCtrl.removeListener(_onScroll);
+    _hCtrl.dispose();
+    super.dispose();
+  }
+
+  /// 표를 가로로 스크롤하면 위 슬라이더도 따라오게 한다(표 → 슬라이더 연동).
+  void _onScroll() {
+    if (_syncingFromSlider || !_hCtrl.hasClients || _stepCount == 0) return;
+    final idx = ((_hCtrl.offset + _selectPad) / _colW).round().clamp(
+      0,
+      _stepCount - 1,
+    );
+    if (idx != _i) setState(() => _i = idx);
+  }
+
+  /// 슬라이더 → 표 연동. 스크롤 애니메이션 동안 [_onScroll]이 값을 되돌리지
+  /// 않도록 플래그로 막는다.
+  void _scrollToSelected() {
+    if (!_hCtrl.hasClients) return;
+    final target = (_i * _colW - _selectPad).clamp(
+      0.0,
+      _hCtrl.position.maxScrollExtent,
+    );
+    _syncingFromSlider = true;
+    _hCtrl
+        .animateTo(
+          target,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        )
+        .whenComplete(() => _syncingFromSlider = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final forecastAsync = ref.watch(marineForecastProvider(widget.location));
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 16)],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+              child: Row(
+                children: [
+                  Icon(Icons.location_on, size: 18, color: scheme.primary),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '상세 예보  ·  ${widget.location.name}',
+                      style: Theme.of(context).textTheme.titleSmall,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.close),
+                    tooltip: '지도로 돌아가기',
+                    onPressed: widget.onClose,
+                  ),
+                ],
+              ),
+            ),
+            Builder(
+              builder: (context) {
+                // 지점 변경 재로딩 중에도 직전 예보를 유지해 표가 사라지지
+                // 않게 한다(표를 스피너로 바꾸면 스크롤이 0으로 리셋된다).
+                final forecast = forecastAsync.valueOrNull ?? _lastForecast;
+                if (forecastAsync.hasValue) _lastForecast = forecastAsync.value;
+                if (forecast == null) {
+                  return Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: forecastAsync.hasError
+                        ? const Text('예보를 불러오지 못했습니다')
+                        : const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                  );
+                }
+                // 3시간 간격으로 향후 최대 16일(Open-Meteo 예보 상한)을 뽑는다.
+                final steps = [
+                  for (final h in forecast.hourly)
+                    if (h.time.hour % 3 == 0) h,
+                ].take(16 * 8).toList();
+                if (steps.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('예보 데이터가 없습니다.'),
+                  );
+                }
+                _stepCount = steps.length;
+                final nowIdx = _closestToNow(steps);
+                // 진입 시 현재 시각과 가장 가까운 칸에 위치시키고 그리로 스크롤.
+                if (!_initialized) {
+                  _initialized = true;
+                  _i = nowIdx;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _scrollToSelected();
+                  });
+                }
+                final i = _i.clamp(0, steps.length - 1);
+                final at = steps[i];
+                final atIsNow = i == nowIdx;
+                // 지도 위 방향 나침반이 이 선택 시각을 반영하도록 전달한다.
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) widget.roseHour.value = at;
+                });
+                return Column(
+                  children: [
+                    // 상단 시간 슬라이더(그래픽 강화). 선택 시각을 크게 강조하고,
+                    // 현재 시각이면 "지금" 배지를 붙여 잘 보이게 한다.
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Row(
+                        children: [
+                          Icon(Icons.schedule, size: 18, color: scheme.primary),
+                          const SizedBox(width: 6),
+                          if (atIsNow)
+                            Container(
+                              margin: const EdgeInsets.only(right: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: scheme.primary,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                '지금',
+                                style: TextStyle(
+                                  color: scheme.onPrimary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          Text(
+                            '${formatMonthDay(at.time)} ${formatHm(at.time)}',
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Slider(
+                              value: i.toDouble(),
+                              min: 0,
+                              max: (steps.length - 1).toDouble(),
+                              onChanged: (v) {
+                                setState(() => _i = v.round());
+                                _scrollToSelected();
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    _Meteogram(
+                      steps: steps,
+                      selected: i,
+                      nowIndex: nowIdx,
+                      controller: _hCtrl,
+                      onColumnTap: (j) => setState(() => _i = j),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 윈디식 색상 메테오그램: 왼쪽 항목 열 고정 + 오른쪽 시각 열 가로 스크롤.
+class _Meteogram extends StatelessWidget {
+  const _Meteogram({
+    required this.steps,
+    required this.selected,
+    required this.nowIndex,
+    required this.controller,
+    required this.onColumnTap,
+  });
+
+  final List<HourlyMarine> steps;
+  final int selected;
+  final int nowIndex;
+  final ScrollController controller;
+  final ValueChanged<int> onColumnTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const rows = [
+      '시간',
+      '날씨',
+      '기온 °C',
+      '바람 m/s',
+      '돌풍 m/s',
+      '너울 m',
+      '너울2 m',
+      '파력 kW/m',
+      '수온 °C',
+    ];
+    final labelStyle = Theme.of(context).textTheme.bodySmall;
+    final totalH =
+        _PointForecastPanelState._dayH +
+        _PointForecastPanelState._timeH +
+        _PointForecastPanelState._cellH * (rows.length - 1);
+    return SizedBox(
+      height: totalH,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 왼쪽 항목 라벨(맨 위 날짜 행만큼 띄운다).
+          SizedBox(
+            width: _PointForecastPanelState._labelW,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const SizedBox(height: _PointForecastPanelState._dayH),
+                for (var r = 0; r < rows.length; r++)
+                  SizedBox(
+                    height: r == 0
+                        ? _PointForecastPanelState._timeH
+                        : _PointForecastPanelState._cellH,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(rows[r], style: labelStyle),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              controller: controller,
+              scrollDirection: Axis.horizontal,
+              itemCount: steps.length,
+              itemBuilder: (context, j) {
+                final isNewDay =
+                    j == 0 ||
+                    !DateUtils.isSameDay(steps[j].time, steps[j - 1].time);
+                return _MeteogramColumn(
+                  hour: steps[j],
+                  isNewDay: isNewDay,
+                  isSelected: j == selected,
+                  isNow: j == nowIndex,
+                  onTap: () => onColumnTap(j),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MeteogramColumn extends StatelessWidget {
+  const _MeteogramColumn({
+    required this.hour,
+    required this.isNewDay,
+    required this.isSelected,
+    required this.isNow,
+    required this.onTap,
+  });
+
+  final HourlyMarine hour;
+  final bool isNewDay;
+  final bool isSelected;
+  final bool isNow;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final windC = windSpeedColor(hour.windSpeedMs);
+    final gustC = windSpeedColor(hour.windGustMs);
+    final swellC = waveHeightColor(hour.swellHeightM);
+    final swell2C = waveHeightColor(hour.swell2HeightM);
+    final isNight = hour.time.hour < 6 || hour.time.hour >= 19;
+
+    Widget cell(
+      String text, {
+      Color? bg,
+      double h = _PointForecastPanelState._cellH,
+    }) => Container(
+      width: _PointForecastPanelState._colW,
+      height: h,
+      alignment: Alignment.center,
+      color: bg,
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: bg == null ? null : _readableOn(bg),
+          fontWeight: bg == null ? FontWeight.normal : FontWeight.w600,
+        ),
+      ),
+    );
+
+    // 방향 화살촉 + 숫자를 한 칸에 함께 그린다(바람·WIND·SWELL·SWELL2).
+    Widget arrowCell(String text, double dirDeg, {required Color bg}) {
+      final fg = _readableOn(bg);
+      return Container(
+        width: _PointForecastPanelState._colW,
+        height: _PointForecastPanelState._cellH,
+        color: bg,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            DirectionArrow(directionDeg: dirDeg, size: 9, color: fg),
+            const SizedBox(width: 2),
+            Text(
+              text,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: fg,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            // 현재 시각 칸은 왼쪽 테두리를 굵은 강조색으로.
+            left: BorderSide(
+              color: isNow
+                  ? scheme.primary
+                  : (isNewDay ? scheme.outline : scheme.outlineVariant),
+              width: isNow ? 2.4 : (isNewDay ? 1.2 : 0.4),
+            ),
+          ),
+          color: isSelected
+              ? scheme.primary.withValues(alpha: 0.14)
+              : (isNow ? scheme.primary.withValues(alpha: 0.06) : null),
+        ),
+        child: Column(
+          children: [
+            // 상단 행: 현재 시각이면 "지금" 배지, 아니면 새 날짜.
+            SizedBox(
+              height: _PointForecastPanelState._dayH,
+              width: _PointForecastPanelState._colW,
+              child: isNow
+                  ? Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: scheme.primary,
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Text(
+                          '지금',
+                          style: TextStyle(
+                            color: scheme.onPrimary,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    )
+                  : (isNewDay
+                        ? Center(
+                            child: Text(
+                              '${hour.time.month}/${hour.time.day}',
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: scheme.primary,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                            ),
+                          )
+                        : null),
+            ),
+            cell('${hour.time.hour}', h: _PointForecastPanelState._timeH),
+            // 날씨 아이콘(맑음·구름·비·번개 등).
+            SizedBox(
+              width: _PointForecastPanelState._colW,
+              height: _PointForecastPanelState._cellH,
+              child: Center(
+                child: WeatherIcon(
+                  code: hour.weatherCode,
+                  size: _PointForecastPanelState._cellH - 4,
+                  night: isNight,
+                ),
+              ),
+            ),
+            cell('${hour.airTempC.round()}'),
+            arrowCell(
+              '${hour.windSpeedMs.round()}',
+              hour.windDirectionDeg,
+              bg: windC,
+            ),
+            cell(
+              '${hour.windGustMs.round()}',
+              bg: gustC.withValues(alpha: 0.65),
+            ),
+            arrowCell(
+              hour.swellHeightM.toStringAsFixed(1),
+              hour.swellDirectionDeg,
+              bg: swellC.withValues(alpha: 0.85),
+            ),
+            arrowCell(
+              hour.swell2HeightM.toStringAsFixed(1),
+              hour.swell2DirectionDeg,
+              bg: swell2C.withValues(alpha: 0.7),
+            ),
+            cell(formatWavePower(hour.wavePowerKw)),
+            cell('${hour.waterTempC.round()}'),
+          ],
+        ),
+      ),
+    );
+  }
+}
