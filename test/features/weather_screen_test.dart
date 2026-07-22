@@ -51,6 +51,49 @@ void main() {
     expect(find.byType(Slider), findsNothing);
   });
 
+  testWidgets('상세 예보 표가 열리면 표 높이를 뺀 지도 영역 가운데로 재중심한다', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          windFieldRepositoryProvider.overrideWithValue(
+            MockWindFieldRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: WeatherScreen()),
+      ),
+    );
+
+    await tester.pump(); // FutureProvider 완료
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    double translationY() {
+      final viewer = tester.widget<InteractiveViewer>(
+        find.byType(InteractiveViewer),
+      );
+      return viewer.transformationController!.value.getTranslation().y;
+    }
+
+    final beforeTy = translationY();
+
+    // 상단 바(바람 정보)를 탭해 상세 예보 표를 연다 — 표 높이가 렌더 뒤
+    // 측정되면(`_measureBottomBar`) 그 높이를 뺀 나머지 지도 영역 가운데로
+    // 재중심이 예약 실행된다.
+    await tester.tap(find.byIcon(Icons.insights));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    final afterTy = translationY();
+
+    // 표가 뜬 만큼 지도가 보이는 영역이 줄어드므로, 같은 골프장이라도 표
+    // 공간을 뺀 영역 가운데에 오도록 화면 위쪽으로 당겨져야 한다(세로
+    // 이동값이 작아진다).
+    expect(afterTy, lessThan(beforeTy));
+  });
+
   testWidgets('지도 마커를 탭하면 선택 지역이 바뀐다', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();

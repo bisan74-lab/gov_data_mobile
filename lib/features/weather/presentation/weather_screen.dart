@@ -81,17 +81,38 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
   final GlobalKey _bottomBarKey = GlobalKey();
   double _bottomBarHeight = 0;
 
+  /// GOLF: 상세 예보 표가 열려 있으면(마커 탭·검색 선택 직후) 표 높이를
+  /// 뺀 나머지 지도 영역 가운데로 재중심해야 하는데, 표 높이는 렌더 뒤에야
+  /// 알 수 있으므로 측정될 때까지 대기 중임을 표시하는 플래그.
+  bool _pendingRecenter = false;
+
   void _measureBottomBar() {
     final h = _bottomBarKey.currentContext?.size?.height ?? 0;
     if ((h - _bottomBarHeight).abs() > 0.5 && mounted) {
       setState(() => _bottomBarHeight = h);
     }
+    if (_pendingRecenter && _forecastPoint != null && h > 0) {
+      _pendingRecenter = false;
+      _requestFocus(_forecastPoint!, bottomInset: h);
+    }
+  }
+
+  /// GOLF: 지도를 특정 골프장으로 이동시키라는 신호를 보낸다. `bottomInset`은
+  /// 하단 상세 예보 표가 가리는 높이로, 그만큼 뺀 나머지 지도 영역 가운데로
+  /// 맞춘다(표가 없으면 0). ValueNotifier는 같은 값이면 다시 알리지 않으므로,
+  /// 같은 골프장·같은 높이로 다시 요청해도 반드시 갱신되도록 먼저 null로
+  /// 리셋한다.
+  void _requestFocus(SeaLocation loc, {double bottomInset = 0}) {
+    _focusTarget.value = null;
+    _focusTarget.value = (location: loc, bottomInset: bottomInset);
   }
 
   /// GOLF: 선택된 골프장의 상세 예보 표를 연다(상단 바람 요약 탭 또는
-  /// 지도 위 골프장 이름 탭으로 진입).
+  /// 지도 위 골프장 이름 탭으로 진입). 표 높이를 아직 모르므로, 측정되면
+  /// (`_measureBottomBar`) 그 높이를 뺀 영역 가운데로 재중심하도록 예약한다.
   void _openDetail() {
     setState(() => _forecastPoint = ref.read(selectedLocationProvider));
+    _pendingRecenter = true;
   }
 
   /// GOLF: 골프장 검색을 연다(우측 상단 칩 탭) → 선택하면 지도를 그
@@ -104,13 +125,14 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
   }
 
   void _selectCourse(GolfCourse course) {
-    final loc = course.toLocation();
-    ref.read(selectedLocationProvider.notifier).select(loc);
-    _focusTarget.value = loc;
+    ref.read(selectedLocationProvider.notifier).select(course.toLocation());
   }
 
-  /// 골프장 검색/선택 시 지도를 그 골프장으로 이동시키라는 신호.
-  final ValueNotifier<SeaLocation?> _focusTarget = ValueNotifier(null);
+  /// 골프장 검색/선택 시 지도를 그 골프장으로 이동시키라는 신호. 표가 열려
+  /// 있을 때는 표가 가리는 높이(`bottomInset`)도 함께 실어, 지도가 보이는
+  /// 나머지 영역 가운데로 맞출 수 있게 한다.
+  final ValueNotifier<({SeaLocation location, double bottomInset})?>
+  _focusTarget = ValueNotifier(null);
 
   void _closeDetail() {
     _roseHour.value = null;
@@ -250,7 +272,17 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
 
     // 다른 탭(홈 등)에서 골프장을 바꾸면 Windy 지도도 그 골프장으로 이동시킨다.
     ref.listen(selectedLocationProvider, (prev, next) {
-      if (prev?.id != next.id) _focusTarget.value = next;
+      if (prev?.id == next.id) return;
+      if (_forecastPoint != null) {
+        // GOLF: 상세 예보 표가 열려 있는 채로 골프장을 바꾸면(우측 상단
+        // 칩), 표도 새 골프장으로 갱신하고, 표 높이를 뺀 나머지 지도
+        // 영역 가운데로 재중심한다(표 높이 측정 뒤 `_measureBottomBar`가
+        // 실제 이동을 예약 실행).
+        setState(() => _forecastPoint = next);
+        _pendingRecenter = true;
+      } else {
+        _requestFocus(next);
+      }
     });
 
     // back 키: 상세 예보가 열려 있으면 먼저 지도로 돌아간다(앱 종료 대신).
@@ -439,8 +471,10 @@ class _WindMapArea extends StatefulWidget {
   /// 현재 선택된 골프장 id(이 골프장 하나만 마커로 표시하고 여기로 지도를 고정).
   final String? selectedCourseId;
 
-  /// 검색/선택으로 지도를 특정 골프장으로 이동시키라는 신호.
-  final ValueNotifier<SeaLocation?> focusTarget;
+  /// 검색/선택으로 지도를 특정 골프장으로 이동시키라는 신호. 표가 열려
+  /// 있으면 표가 가리는 높이(`bottomInset`)도 함께 실려 온다.
+  final ValueNotifier<({SeaLocation location, double bottomInset})?>
+  focusTarget;
 
   @override
   State<_WindMapArea> createState() => _WindMapAreaState();
@@ -468,17 +502,20 @@ class _WindMapAreaState extends State<_WindMapArea> {
     widget.focusTarget.addListener(_onFocusRequested);
   }
 
-  /// 검색/마커 선택으로 지정된 골프장을 화면 중앙에 두고 확대한다.
+  /// 검색/마커 선택으로 지정된 골프장을, 하단 상세 예보 표가 가리는 높이
+  /// (`bottomInset`)를 뺀 나머지 지도 영역(보이는 부분) 가운데에 둔다.
   void _onFocusRequested() {
-    final loc = widget.focusTarget.value;
+    final target = widget.focusTarget.value;
     final screen = _lastScreen;
     final proj = _lastProjection;
-    if (loc == null || screen == null || proj == null) return;
+    if (target == null || screen == null || proj == null) return;
+    final loc = target.location;
+    final visibleH = screen.height - target.bottomInset;
     final s = math.max(_scale, 6.0);
     final kx = proj.x(loc.longitude);
     final ky = proj.y(loc.latitude);
     _transformController.value = Matrix4.identity()
-      ..translate(screen.width / 2 - s * kx, screen.height / 2 - s * ky)
+      ..translate(screen.width / 2 - s * kx, visibleH / 2 - s * ky)
       ..scale(s);
   }
 

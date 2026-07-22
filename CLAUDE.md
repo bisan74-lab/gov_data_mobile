@@ -47,7 +47,12 @@ Windy 지도를 이식·개조한 것이다. **골프윈디 커스터마이징�
    비활성화), 마커는 **선택된 곳 하나만**(`GolfMarkerLayer`, 이름 탭→상세
    예보), 상단 바(바람 정보+골프장명 칩)는 **항상** 표시(바다윈디는 탭해야
    뜨는 임시 커서 바였음), `pointSeaLocation`은 미사용이지만 diff 최소화를
-   위해 그대로 남겨 둠.
+   위해 그대로 남겨 둠. 상세 예보 표가 열리면(마커/상단 바 탭, 또는 표가
+   열린 채로 우측 상단 칩으로 골프장을 바꿔도) 골프장이 **표 공간을 뺀
+   나머지 지도 영역 가운데**로 재중심된다 — `focusTarget`
+   ValueNotifier가 `(location, bottomInset)` 레코드를 실어 보내고,
+   `_measureBottomBar()`가 표 높이를 측정한 뒤 재중심을 실행한다
+   (`_pendingRecenter`/`_requestFocus`/`_onFocusRequested`).
 3. **완전히 골프 전용이라 바다윈디에 없는 파일**(그대로 유지, 병합 대상
    아님): `features/golf/presentation/widgets/golf_marker_layer.dart`,
    `golf_search_sheet.dart`, `features/golf/data/`, `features/golf/logic/`.
