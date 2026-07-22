@@ -13,7 +13,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 // pump()로 몇 프레임만 진행해 예외 없이 그려지는지 확인한다.
 
 void main() {
-  testWidgets('진입 시 지도만 그리고, 지도를 탭하면 상단에 바람·상세예보가 뜬다', (tester) async {
+  testWidgets('진입 시 선택 골프장의 바람 요약·이름 칩이 항상 뜨고, 탭하면 상세 예보 표가 열린다', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
 
@@ -35,16 +37,18 @@ void main() {
     await tester.pump(const Duration(milliseconds: 16));
     await tester.pump(const Duration(milliseconds: 16));
 
-    // 진입 시: 지도(CustomPaint) + 하단 시간 스크러버(Slider)만, 상세 예보 표·
-    // 상단 바 없음. (윈디처럼 지도만 보일 때도 바람장 시각을 앞뒤로 스크럽한다.)
+    // 진입 즉시(탭 없이도): 지도 + 하단 시간 스크러버(Slider) + 상단 바(왼쪽
+    // 바람 정보, 오른쪽 골프장명 칩)가 모두 떠 있다.
     expect(find.byType(CustomPaint), findsWidgets);
     expect(find.byType(Slider), findsOneWidget);
-    expect(find.text('상세 예보'), findsNothing);
+    expect(find.byIcon(Icons.insights), findsOneWidget);
+    expect(find.text(sampleLocations.first.name), findsWidgets);
 
-    // 지도 중앙을 탭하면 커서가 찍히고 상단에 바람 세기·방향 + "상세 예보" 버튼.
-    await tester.tapAt(tester.getCenter(find.byType(WeatherScreen)));
+    // 상단 바 왼쪽(바람 정보)을 탭하면 표가 열려 하단 시간 스크러버
+    // (map-mode 전용)가 사라진다.
+    await tester.tap(find.byIcon(Icons.insights));
     await tester.pump(const Duration(milliseconds: 16));
-    expect(find.text('상세 예보'), findsOneWidget);
+    expect(find.byType(Slider), findsNothing);
   });
 
   testWidgets('지도 마커를 탭하면 선택 지역이 바뀐다', (tester) async {

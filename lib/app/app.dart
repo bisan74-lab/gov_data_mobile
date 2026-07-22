@@ -44,9 +44,14 @@ class GolfWindyApp extends ConsumerWidget {
 
 /// 하단 탭 기반 앱 셸: 홈 / 날씨 / Windy / 설정.
 /// 홈·날씨·Windy는 모두 공용으로 선택된 골프장을 따른다.
-class AppShell extends ConsumerWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
+  @override
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> {
   static const _screens = [
     HomeScreen(),
     KmaWeatherScreen(),
@@ -54,9 +59,17 @@ class AppShell extends ConsumerWidget {
     SettingsScreen(),
   ];
 
+  /// 실제로 한 번이라도 연 탭의 인덱스만 화면을 만든다. 그렇지 않으면
+  /// `IndexedStack`이 시작 시 4탭을 전부 즉시 빌드해, 아직 보지도 않은
+  /// Windy 탭의 무거운 바람장(16일치) 요청이 홈 화면의 예보 요청과 동시에
+  /// 나가 서로 대역폭을 다투면서 홈 첫 화면이 10초 넘게 늦어졌다. 탭을 한
+  /// 번 열면 이후엔 계속 유지해 상태(스크롤 위치 등)를 보존한다.
+  final Set<int> _visited = {0};
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final index = ref.watch(appTabIndexProvider);
+    _visited.add(index);
     // Windy(몰입형 지도) 탭에서는 하단 라벨 바를 숨긴다 — 그 탭 안에서 오른쪽
     // 세로 아이콘 내비게이션을 띄운다. 나머지 탭은 원래 하단 라벨 내비게이션.
     final onWindy = index == windyTabIndex;
@@ -67,7 +80,12 @@ class AppShell extends ConsumerWidget {
         // 불필요한 리빌드와 배터리 소모, pumpAndSettle 무한대기를 막는다.
         children: [
           for (var i = 0; i < _screens.length; i++)
-            TickerMode(enabled: i == index, child: _screens[i]),
+            TickerMode(
+              enabled: i == index,
+              child: _visited.contains(i)
+                  ? _screens[i]
+                  : const SizedBox.shrink(),
+            ),
         ],
       ),
       bottomNavigationBar: onWindy

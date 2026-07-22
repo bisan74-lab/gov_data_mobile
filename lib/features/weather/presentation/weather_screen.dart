@@ -26,13 +26,22 @@ import 'widgets/wind_arrow.dart';
 import 'widgets/wind_heatmap.dart';
 import 'widgets/wind_map_painter.dart';
 
-/// 바람·해양 날씨 화면 (윈디 영역).
+/// 바람 날씨 화면 (윈디 영역).
 ///
-/// 진입 시 지도만 전체 화면으로 보인다(핀치 줌 가능). 지도를 탭하면 그 지점에
-/// 핀이 꽂히고, 상단에 그 지점의 바람 세기·방향과 "상세 예보" 버튼이 뜬다.
-/// "상세 예보"를 누르면 하단에 임의 좌표의 시간별 예보 표(forecast at this
-/// point)가 펼쳐지고, 지도의 그 지점에는 방향 나침반(WIND/SWELL/SWELL2)이
-/// 그려진다. back 키를 누르면 표를 닫고 지도로 돌아간다.
+/// **골프윈디 커스터마이징 — 바다윈디 원본과 다른 부분** (아래 절만; 나머지
+/// 지도 레이어·페인터·투영 등은 바다윈디 원본 그대로다). 이후 바다윈디에서
+/// 지도 개선을 다시 가져올 때는, 이 파일의 "GOLF:" 주석이 붙은 블록만 남기고
+/// 나머지(히트맵/파티클/해안선/도시 라벨/시간 스크러버/상세 예보 표 등)를
+/// 원본으로 교체하면 된다:
+/// - GOLF: 지도는 항상 **선택된 골프장**에 고정·중심(임의 지점 탭 불가).
+/// - GOLF: 골프장은 선택된 곳 **하나만** 마커로 표시([GolfMarkerLayer]).
+/// - GOLF: 골프장 이름(마커 라벨)을 탭하면 그 골프장의 상세 예보로 들어간다.
+/// - GOLF: 상단 바람 요약 바·우측 상단 골프장명 칩은 **항상** 떠 있다(탭
+///   여부와 무관 — 바다윈디 원본은 탭해야 뜨는 임시 커서 바였다).
+///
+/// 지도에서 핀치 줌·팬은 그대로 가능하고, 진입 시 선택 골프장이 화면
+/// 중앙에 확대되어 보인다. back 키를 누르면 상세 예보 표를 닫고 지도로
+/// 돌아간다.
 class WeatherScreen extends ConsumerStatefulWidget {
   const WeatherScreen({super.key});
 
@@ -62,12 +71,10 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
   /// 슬라이더로 시각을 고르면 지도도 그 시각의 바람으로 바뀐다(윈디처럼).
   int _hourOffset = 0;
 
-  /// 상세 예보로 켜진 지점. null이면 지도 모드(하단 표 없음).
+  /// GOLF: 상세 예보(하단 표)가 열려 있는지. null이면 지도 모드.
+  /// 골프윈디는 임의 지점을 찍지 않으므로, 열리면 항상 **현재 선택된
+  /// 골프장**의 예보다(바다윈디 원본은 탭한 임의 좌표였다).
   SeaLocation? _forecastPoint;
-
-  /// 지도에서 탭한 커서 좌표. null이면 아직 안 찍음(진입 시 지도만 보인다).
-  double? _cursorLat;
-  double? _cursorLon;
 
   /// 하단 바(시간 슬라이더 또는 상세 예보 표)가 차지하는 높이. 오른쪽 세로
   /// 아이콘 내비게이션을 이 높이만큼 위로 올려, 표가 떴을 때 겹치지 않게 한다.
@@ -81,36 +88,14 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
     }
   }
 
-  void _onPick(double lat, double lon) {
-    setState(() {
-      _cursorLat = lat;
-      _cursorLon = lon;
-      // 상세 예보가 열려 있으면 그 지점으로 실시간 갱신(날짜 위치는 패널이 유지).
-      if (_forecastPoint != null) {
-        _forecastPoint = pointSeaLocation(lat, lon);
-      }
-    });
-  }
-
+  /// GOLF: 선택된 골프장의 상세 예보 표를 연다(상단 바람 요약 탭 또는
+  /// 지도 위 골프장 이름 탭으로 진입).
   void _openDetail() {
-    final lat = _cursorLat;
-    final lon = _cursorLon;
-    if (lat == null || lon == null) return;
-    setState(() => _forecastPoint = pointSeaLocation(lat, lon));
+    setState(() => _forecastPoint = ref.read(selectedLocationProvider));
   }
 
-  /// 상단 커서 바의 X — 찍은 지점을 지워 바를 없앤다.
-  void _clearCursor() {
-    setState(() {
-      _cursorLat = null;
-      _cursorLon = null;
-    });
-  }
-
-  /// 골프장 검색/마커 탭 시 지도를 그 골프장으로 이동시키라는 신호.
-  final ValueNotifier<SeaLocation?> _focusTarget = ValueNotifier(null);
-
-  /// 돋보기: 골프장 이름 검색 → 선택하면 지도를 그 골프장으로 이동·핀 표시.
+  /// GOLF: 골프장 검색을 연다(우측 상단 칩 탭) → 선택하면 지도를 그
+  /// 골프장으로 이동시키고 공용 선택 지점을 갱신한다.
   Future<void> _openSearch() async {
     final courses = ref.read(golfCoursesProvider);
     final picked = await showGolfSearchSheet(context, courses);
@@ -118,13 +103,14 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
     _selectCourse(picked);
   }
 
-  /// 지도 마커 탭 시 골프장 선택 + 이동 + 커서 핀(→ "상세 예보" 진입 가능).
   void _selectCourse(GolfCourse course) {
     final loc = course.toLocation();
     ref.read(selectedLocationProvider.notifier).select(loc);
     _focusTarget.value = loc;
-    _onPick(loc.latitude, loc.longitude);
   }
+
+  /// 골프장 검색/선택 시 지도를 그 골프장으로 이동시키라는 신호.
+  final ValueNotifier<SeaLocation?> _focusTarget = ValueNotifier(null);
 
   void _closeDetail() {
     _roseHour.value = null;
@@ -283,45 +269,46 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
             final series = result.series;
             _ensureSeeded(series);
             final field = series.at(_hourOffset);
+            final selectedLoc = ref.watch(selectedLocationProvider);
 
-            // 커서(탭한 지점)의 바람 세기·방향(상단 표시용). u/v는 흐름 방향
-            // 성분이므로, 불어오는 방향(기상 관례)은 atan2(-u,-v)로 되돌린다.
+            // GOLF: 상단 바람 요약은 **탭한 임의 지점**이 아니라 **선택된
+            // 골프장**의 값이다(항상 표시). u/v는 흐름 방향 성분이므로,
+            // 불어오는 방향(기상 관례)은 atan2(-u,-v)로 되돌린다.
             double? cSpeed;
             double? cDir;
-            if (_cursorLat case final clat?) {
-              if (_cursorLon case final clon?) {
-                final uv = field.sample(clat, clon);
-                if (uv != null) {
-                  final (u, v) = uv;
-                  cSpeed = math.sqrt(u * u + v * v);
-                  cDir = (math.atan2(-u, -v) * 180 / math.pi + 360) % 360;
-                }
-                // 격자(약 2° 간격) 보간은 국지 바람이 뭉개져 실제(윈디 지점
-                // 표시값)보다 약하게 나온다. 정확한 좌표로 요청한 지점 시계열이
-                // 도착하면, 지도에 표시 중인 시각과 같은 시각의 지점값으로
-                // 덮어써 윈디와 숫자가 맞게 한다(도착 전엔 격자값 폴백).
-                final points = ref
-                    .watch(
-                      cursorWindSeriesProvider((
-                        lat: (clat * 1000).roundToDouble() / 1000,
-                        lon: (clon * 1000).roundToDouble() / 1000,
-                      )),
-                    )
-                    .valueOrNull;
-                if (points != null && points.isNotEmpty) {
-                  var best = points.first;
-                  var bestDiff = best.time.difference(field.time).abs();
-                  for (final p in points) {
-                    final d = p.time.difference(field.time).abs();
-                    if (d < bestDiff) {
-                      bestDiff = d;
-                      best = p;
-                    }
-                  }
-                  cSpeed = best.speedMs;
-                  cDir = best.directionDeg;
+            final uv = field.sample(
+              selectedLoc.latitude,
+              selectedLoc.longitude,
+            );
+            if (uv != null) {
+              final (u, v) = uv;
+              cSpeed = math.sqrt(u * u + v * v);
+              cDir = (math.atan2(-u, -v) * 180 / math.pi + 360) % 360;
+            }
+            // 격자(약 2° 간격) 보간은 국지 바람이 뭉개져 실제(윈디 지점
+            // 표시값)보다 약하게 나온다. 정확한 좌표로 요청한 지점 시계열이
+            // 도착하면, 지도에 표시 중인 시각과 같은 시각의 지점값으로
+            // 덮어써 윈디와 숫자가 맞게 한다(도착 전엔 격자값 폴백).
+            final points = ref
+                .watch(
+                  cursorWindSeriesProvider((
+                    lat: (selectedLoc.latitude * 1000).roundToDouble() / 1000,
+                    lon: (selectedLoc.longitude * 1000).roundToDouble() / 1000,
+                  )),
+                )
+                .valueOrNull;
+            if (points != null && points.isNotEmpty) {
+              var best = points.first;
+              var bestDiff = best.time.difference(field.time).abs();
+              for (final p in points) {
+                final d = p.time.difference(field.time).abs();
+                if (d < bestDiff) {
+                  bestDiff = d;
+                  best = p;
                 }
               }
+              cSpeed = best.speedMs;
+              cDir = best.directionDeg;
             }
 
             // 하단 바 높이를 렌더 뒤 측정해 오른쪽 아이콘 내비를 그 위로 올린다.
@@ -338,26 +325,27 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                     repaint: _repaint,
                     forecastPoint: _forecastPoint,
                     roseHour: _roseHour,
-                    cursorLat: _cursorLat,
-                    cursorLon: _cursorLon,
-                    onPick: _onPick,
                     onOpenDetail: _openDetail,
                     courses: ref.watch(golfCoursesProvider),
-                    selectedCourseId: ref.watch(selectedLocationProvider).id,
+                    selectedCourseId: selectedLoc.id,
                     focusTarget: _focusTarget,
                   ),
                 ),
-                // 상단: 상세 예보 진입 전, 커서 지점의 바람 세기·방향 + 진입 버튼.
-                if (_forecastPoint == null && cSpeed != null && cDir != null)
+                // GOLF: 상단 바 — **항상** 떠 있다(바다윈디 원본은 탭해야
+                // 뜨는 임시 커서 바였다). 왼쪽은 선택 골프장의 바람 세기·
+                // 방향(탭 → 상세 예보), 오른쪽은 골프장명 칩(탭 → 검색으로
+                // 지역 변경). 한 줄에 묶어야 두 영역이 겹치지 않는다.
+                if (cSpeed != null && cDir != null)
                   Positioned(
                     top: 0,
                     left: 0,
                     right: 0,
-                    child: _CursorWindBar(
+                    child: _TopWindBar(
                       speed: cSpeed,
                       dir: cDir,
+                      courseName: selectedLoc.name,
                       onDetail: _openDetail,
-                      onClose: _clearCursor,
+                      onSearch: _openSearch,
                     ),
                   ),
                 // 하단(지도 모드): 시간·날짜 슬라이더. 지도만 보이는 상태에서
@@ -394,17 +382,6 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                       ),
                     ),
                   ),
-                // 우측 상단: 투명 배경 골프장 선택 칩(아이콘 + 골프장명). 탭하면
-                // 골프장 검색이 열려 지역을 바꾼다. 커서 바가 뜰 땐 숨긴다.
-                if (_forecastPoint == null && cSpeed == null)
-                  Positioned(
-                    top: MediaQuery.of(context).padding.top + 6,
-                    right: 8,
-                    child: _CourseSelectorChip(
-                      name: ref.watch(selectedLocationProvider).name,
-                      onTap: _openSearch,
-                    ),
-                  ),
                 // 오른쪽 세로 아이콘 내비게이션(Windy 탭 전용). 하단 바 높이만큼
                 // 위로 올려 시간 바·상세 예보 표와 겹치지 않게 한다.
                 Positioned(
@@ -435,9 +412,6 @@ class _WindMapArea extends StatefulWidget {
     required this.repaint,
     required this.forecastPoint,
     required this.roseHour,
-    required this.cursorLat,
-    required this.cursorLon,
-    required this.onPick,
     required this.onOpenDetail,
     required this.courses,
     required this.selectedCourseId,
@@ -456,17 +430,10 @@ class _WindMapArea extends StatefulWidget {
   /// 방향 나침반에 표시할 현재 선택 시각의 해양값(예보 표와 공유).
   final ValueNotifier<HourlyMarine?> roseHour;
 
-  /// 탭한 커서 좌표(상위 화면이 소유). null이면 아직 안 찍음.
-  final double? cursorLat;
-  final double? cursorLon;
-
-  /// 지도를 탭했을 때 커서 좌표를 알린다.
-  final void Function(double lat, double lon) onPick;
-
-  /// "상세 예보" 말풍선 → 커서 지점 예보 표로 진입.
+  /// GOLF: 골프장 이름(마커 라벨) 탭 → 그 골프장의 상세 예보로 진입.
   final VoidCallback onOpenDetail;
 
-  /// 지도에 마커로 찍을 전국 골프장.
+  /// 지도에 마커로 찍을 전국 골프장(그중 선택된 하나만 실제로 그려진다).
   final List<GolfCourse> courses;
 
   /// 현재 선택된 골프장 id(이 골프장 하나만 마커로 표시하고 여기로 지도를 고정).
@@ -641,107 +608,80 @@ class _WindMapAreaState extends State<_WindMapArea> {
             // 지도가 항상 뷰를 덮으므로 경계 여백은 두지 않는다(가장자리에 검은
             // 빈 부분이 올라오지 않게 한다).
             boundaryMargin: EdgeInsets.zero,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapUp: (details) {
-                final lat = projection.latFor(details.localPosition.dy);
-                final lon = projection.lonFor(details.localPosition.dx);
-                if (!field.contains(lat, lon)) return;
-                // 커서 좌표를 상위로 알린다. 상세 예보가 열려 있으면 상위에서
-                // 그 지점으로 실시간 갱신한다.
-                widget.onPick(lat, lon);
-              },
-              child: SizedBox(
-                width: mapSize.width,
-                height: mapSize.height,
-                child: Stack(
-                  children: [
-                    if (heatmap != null)
-                      CustomPaint(
-                        painter: WindHeatmapPainter(
-                          image: heatmap,
-                          dstRect: fieldRect,
-                        ),
-                        size: mapSize,
-                      ),
-                    // RepaintBoundary로 감싸지 않는다 — 감싸면 base 해상도로
-                    // 래스터화된 뒤 확대되어 흐려지고, 1/scale 두께가 사라진다.
-                    // 그냥 두면 InteractiveViewer의 변환 레이어가 벡터를 확대
-                    // 배율로 다시 그려 선이 선명하고, strokeWidth=0.6/scale이
-                    // 화면상 항상 얇게 유지된다. (파티클 레이어는 자체
-                    // RepaintBoundary가 있어 이 해안선은 매 프레임 다시 그려지지
-                    // 않는다.)
+            // GOLF: 바다윈디 원본은 이 자리에 GestureDetector.onTapUp으로
+            // 임의 좌표를 찍어 다른 지점 예보를 열었다(핀 드롭). 골프윈디는
+            // 선택한 골프장 외 다른 지역을 고를 필요가 없어 그 탭 제스처를
+            // 없앴다 — 지도는 오직 핀치 줌·팬만 반응하고, 상세 예보 진입은
+            // 골프장 이름(마커)이나 상단 바람 바를 탭해서 들어간다.
+            child: SizedBox(
+              width: mapSize.width,
+              height: mapSize.height,
+              child: Stack(
+                children: [
+                  if (heatmap != null)
                     CustomPaint(
-                      painter: CoastlinePainter(
-                        projection: projection,
-                        scale: _scale,
+                      painter: WindHeatmapPainter(
+                        image: heatmap,
+                        dstRect: fieldRect,
                       ),
                       size: mapSize,
                     ),
-                    Positioned.fromRect(
-                      rect: fieldRect,
-                      // 파티클만 매 프레임 다시 그려지도록 경계를 둔다.
-                      child: RepaintBoundary(
-                        child: CustomPaint(
-                          painter: WindMapPainter(
-                            particles: widget.particles,
-                            // 순백이 아니라 살짝 어두운 회청색으로 은은하게
-                            // (Windy처럼 흰 선이 과하게 밝지 않게).
-                            color: const Color(0xFFAEB9C6),
-                            repaint: widget.repaint,
-                          ),
-                          size: fieldRect.size,
-                        ),
-                      ),
-                    ),
-                    // 지도 앱처럼 도시 이름만 확대 단계별로 표시(항구 점 라벨은
-                    // 제거해 깔끔하게). 지역 선택은 우측 상단 지역 선택 버튼으로 한다.
-                    MapCityLabelLayer(projection: projection, scale: _scale),
-                    // 선택된 골프장 하나만 초록 마커 + 이름으로 표시한다.
-                    GolfMarkerLayer(
+                  // RepaintBoundary로 감싸지 않는다 — 감싸면 base 해상도로
+                  // 래스터화된 뒤 확대되어 흐려지고, 1/scale 두께가 사라진다.
+                  // 그냥 두면 InteractiveViewer의 변환 레이어가 벡터를 확대
+                  // 배율로 다시 그려 선이 선명하고, strokeWidth=0.6/scale이
+                  // 화면상 항상 얇게 유지된다. (파티클 레이어는 자체
+                  // RepaintBoundary가 있어 이 해안선은 매 프레임 다시 그려지지
+                  // 않는다.)
+                  CustomPaint(
+                    painter: CoastlinePainter(
                       projection: projection,
                       scale: _scale,
-                      selected: _selectedCourse(),
                     ),
-                    // 예보 표가 열려 있으면 그 지점에 윈디식 방향 나침반(로즈)을,
-                    // 아니면 탭한 지점에 "상세 예보" 말풍선을 띄운다.
-                    if (widget.forecastPoint case final fp?)
-                      ValueListenableBuilder<HourlyMarine?>(
-                        valueListenable: widget.roseHour,
-                        builder: (context, hour, _) => hour == null
-                            ? const SizedBox.shrink()
-                            : _ForecastRose(
-                                scale: _scale,
-                                left: projection.x(fp.longitude),
-                                top: projection.y(fp.latitude),
-                                hour: hour,
-                              ),
-                      )
-                    else if (widget.cursorLat case final plat?)
-                      if (widget.cursorLon case final plon?)
-                        Positioned(
-                          left: projection.x(plon),
-                          top: projection.y(plat),
-                          // 커서 핀. 확대해도 크기가 일정하도록 반대로 축소하고
-                          // 핀 끝(바닥 중앙)이 좌표에 오게 한다.
-                          child: FractionalTranslation(
-                            translation: const Offset(-0.5, -1),
-                            child: Transform.scale(
-                              scale: 1 / _scale,
-                              alignment: Alignment.bottomCenter,
-                              child: Icon(
-                                Icons.location_on,
-                                size: 36,
-                                color: Theme.of(context).colorScheme.primary,
-                                shadows: const [
-                                  Shadow(color: Colors.black54, blurRadius: 3),
-                                ],
-                              ),
-                            ),
-                          ),
+                    size: mapSize,
+                  ),
+                  Positioned.fromRect(
+                    rect: fieldRect,
+                    // 파티클만 매 프레임 다시 그려지도록 경계를 둔다.
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: WindMapPainter(
+                          particles: widget.particles,
+                          // 순백이 아니라 살짝 어두운 회청색으로 은은하게
+                          // (Windy처럼 흰 선이 과하게 밝지 않게).
+                          color: const Color(0xFFAEB9C6),
+                          repaint: widget.repaint,
                         ),
-                  ],
-                ),
+                        size: fieldRect.size,
+                      ),
+                    ),
+                  ),
+                  // 지도 앱처럼 도시 이름만 확대 단계별로 표시(항구 점 라벨은
+                  // 제거해 깔끔하게). 지역 선택은 우측 상단 지역 선택 버튼으로 한다.
+                  MapCityLabelLayer(projection: projection, scale: _scale),
+                  // GOLF: 선택된 골프장 하나만 초록 마커 + 이름으로 표시한다.
+                  // 이름을 탭하면 그 골프장의 상세 예보로 들어간다.
+                  GolfMarkerLayer(
+                    projection: projection,
+                    scale: _scale,
+                    selected: _selectedCourse(),
+                    onTap: widget.onOpenDetail,
+                  ),
+                  // 상세 예보 표가 열려 있으면 골프장 위치에 윈디식 방향
+                  // 나침반(로즈)을 띄운다.
+                  if (widget.forecastPoint case final fp?)
+                    ValueListenableBuilder<HourlyMarine?>(
+                      valueListenable: widget.roseHour,
+                      builder: (context, hour, _) => hour == null
+                          ? const SizedBox.shrink()
+                          : _ForecastRose(
+                              scale: _scale,
+                              left: projection.x(fp.longitude),
+                              top: projection.y(fp.latitude),
+                              hour: hour,
+                            ),
+                    ),
+                ],
               ),
             ),
           );
@@ -753,18 +693,27 @@ class _WindMapAreaState extends State<_WindMapArea> {
 
 /// 상세 예보 진입 전, 지도 상단에 뜨는 커서 지점 요약 바: 바람 세기·방향
 /// 아이콘 + "상세 예보" 진입 버튼.
-class _CursorWindBar extends StatelessWidget {
-  const _CursorWindBar({
+/// GOLF: \uc9c0\ub3c4 \uc0c1\ub2e8\uc5d0 **\ud56d\uc0c1** \ub5a0 \uc788\ub294, \uc120\ud0dd\ub41c \uace8\ud504\uc7a5\uc758 \ubc14\ub78c \uc138\uae30\u00b7\ubc29\ud5a5 \uc694\uc57d \ubc14
+/// (\ubc14\ub2e4\uc708\ub514 \uc6d0\ubcf8\uc740 \uc784\uc758 \uc9c0\uc810\uc744 \ud0ed\ud574\uc57c\ub9cc \ub728\ub294 \ucee4\uc11c \ubc14\uc600\ub2e4). \ud0ed\ud558\uba74(\ub610\ub294
+/// "\uc0c1\uc138 \uc608\ubcf4" \ubc84\ud2bc) \uadf8 \uace8\ud504\uc7a5\uc758 \uc0c1\uc138 \uc608\ubcf4 \ud45c\ub85c \ub4e4\uc5b4\uac04\ub2e4.
+class _TopWindBar extends StatelessWidget {
+  const _TopWindBar({
     required this.speed,
     required this.dir,
+    required this.courseName,
     required this.onDetail,
-    required this.onClose,
+    required this.onSearch,
   });
 
   final double speed;
   final double dir;
+  final String courseName;
+
+  /// \uc67c\ucabd(\ubc14\ub78c \uc815\ubcf4) \ud0ed \u2192 \uc120\ud0dd \uace8\ud504\uc7a5 \uc0c1\uc138 \uc608\ubcf4\ub85c \uc9c4\uc785.
   final VoidCallback onDetail;
-  final VoidCallback onClose;
+
+  /// \uc624\ub978\ucabd(\uace8\ud504\uc7a5\uba85) \ud0ed \u2192 \uac80\uc0c9\uc73c\ub85c \ub2e4\ub978 \uace8\ud504\uc7a5 \uc120\ud0dd.
+  final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -772,40 +721,80 @@ class _CursorWindBar extends StatelessWidget {
     return SafeArea(
       bottom: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 4, 0),
+        padding: const EdgeInsets.fromLTRB(10, 6, 8, 0),
         child: Row(
           children: [
-            WindArrow(directionDeg: dir, size: 24, color: Colors.white),
-            const SizedBox(width: 10),
-            Text(
-              '${compassKo(dir)}\ud48d  ${formatWind(speed)}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                shadows: shadow,
-              ),
-            ),
-            const Spacer(),
-            TextButton.icon(
-              onPressed: onDetail,
-              icon: const Icon(Icons.insights, size: 18, color: Colors.white),
-              label: const Text(
-                '\uc0c1\uc138 \uc608\ubcf4',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  shadows: shadow,
+            // \uc67c\ucabd: \ubc14\ub78c \uc138\uae30\u00b7\ubc29\ud5a5 \u2014 \ud0ed\ud558\uba74 \uc0c1\uc138 \uc608\ubcf4.
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onDetail,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    WindArrow(directionDeg: dir, size: 22, color: Colors.white),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '${compassKo(dir)}\ud48d  ${formatWind(speed)}',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          shadows: shadow,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(
+                      Icons.insights,
+                      size: 16,
+                      color: Colors.white70,
+                      shadows: shadow,
+                    ),
+                  ],
                 ),
               ),
             ),
-            IconButton(
-              onPressed: onClose,
-              tooltip: '\ub2eb\uae30',
-              icon: const Icon(
-                Icons.close,
-                color: Colors.white,
-                shadows: shadow,
+            // \uc624\ub978\ucabd: \uace8\ud504\uc7a5 \uc774\ub984 \uce69 \u2014 \ud0ed\ud558\uba74 \uac80\uc0c9\uc73c\ub85c \uc9c0\uc5ed\uc744 \ubc14\uafbc\ub2e4.
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onSearch,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.golf_course,
+                      size: 18,
+                      color: Colors.white,
+                      shadows: shadow,
+                    ),
+                    const SizedBox(width: 5),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: Text(
+                        courseName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          shadows: shadow,
+                        ),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.expand_more,
+                      size: 18,
+                      color: Colors.white,
+                      shadows: shadow,
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -849,59 +838,6 @@ class _WindyNavRail extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-/// 지도 우측 상단의 **투명 배경** 골프장 선택 칩. 골프 아이콘 + 현재 골프장명 +
-/// 펼침 표시를 흰 글씨(그림자)로 얹고, 탭하면 골프장 검색이 열려 지역을 바꾼다.
-class _CourseSelectorChip extends StatelessWidget {
-  const _CourseSelectorChip({required this.name, required this.onTap});
-
-  final String name;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    const shadow = [Shadow(color: Colors.black, blurRadius: 5)];
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.golf_course,
-              size: 20,
-              color: Colors.white,
-              shadows: shadow,
-            ),
-            const SizedBox(width: 6),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 190),
-              child: Text(
-                name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  shadows: shadow,
-                ),
-              ),
-            ),
-            const Icon(
-              Icons.expand_more,
-              size: 20,
-              color: Colors.white,
-              shadows: shadow,
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

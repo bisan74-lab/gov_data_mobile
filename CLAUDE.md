@@ -15,12 +15,42 @@ Windy 탭은 몰입형 지도라 하단 라벨바를 숨기고, 지도 안 우�
 - **홈**: 골프장 정보(홀·유형·주소) + 날짜별 **라운딩 지수** + **추천 옷차림** +
   티타임대 **시간대별 바람** + **라운드 컨디션 카드**(일출·일몰·자외선·습도)
 - **날씨**: 선택 골프장의 시간별/일별 예보(시간별 카드에 풍향·풍속 강조)
-- **Windy**: 바람 지도(BadaMobile 이식) + 전국 골프장 마커(`GolfMarkerLayer`) +
-  주요 도시 라벨 + 우측 레일 **돋보기 검색**(`golf_search_sheet.dart`)
+- **Windy**: 바람 지도(BadaMobile 이식) 진입 시 **선택 골프장이 화면 중앙에
+  고정·확대**된다. 지도 탭으로 다른 지점을 찍는 기능은 없고(임의 지역 선택
+  불필요), **선택된 골프장 하나만** 마커로 표시된다(`GolfMarkerLayer`) — 그
+  이름을 탭하면 상세 예보로 들어간다. 맨 위 상단 바(왼쪽: 항상 떠 있는 선택
+  골프장의 바람 세기·방향 — 탭하면 상세 예보, 오른쪽: 골프장명 칩 — 탭하면
+  검색으로 지역 변경)와 우측 세로 아이콘 내비게이션이 있다.
 - **설정**: 색상 스킨(기본 페어웨이 그린)·밝기·배경·정책·강제 업데이트 게이트
 
 홈·날씨·Windy는 공용 `selectedLocationProvider`(선택 골프장)를 따른다.
 추천 로직(라운딩 지수·옷차림)은 `features/golf/logic/golf_advice.dart`(순수 함수, 테스트 대상).
+
+## 바다윈디 지도 재동기화 가이드
+
+`features/weather/presentation/weather_screen.dart`와 그 위젯들은 바다윈디의
+Windy 지도를 이식·개조한 것이다. **골프윈디 커스터마이징은 파일 최상단 doc
+주석과 코드 곳곳의 `// GOLF:` 주석으로 표시해 뒀다** — 다음에 바다윈디에서
+지도 개선을 다시 가져올 때는:
+
+1. **그대로 덮어써도 되는 순수 복사본**(바다윈디 원본과 동일, 골프 특화 없음):
+   `widgets/map_projection.dart`, `widgets/coastline_painter.dart`,
+   `widgets/country_borders_data.dart`, `widgets/map_city_labels.dart`,
+   `widgets/wind_heatmap.dart`, `widgets/wind_map_painter.dart`,
+   `data/models/wind_field.dart`,
+   `data/repositories/{open_meteo_wind_field,github_wind_field,caching_wind_field,wind_field}_repository.dart`.
+   → 바다윈디 최신본으로 그냥 교체한다.
+2. **골프 커스터마이징이 섞인 파일**(`weather_screen.dart`): `// GOLF:` 주석이
+   붙은 블록만 남기고 나머지(히트맵/파티클/해안선/도시 라벨/시간 스크러버/
+   상세 예보 표/`_ForecastRose` 등)를 바다윈디 최신본으로 교체한다. 현재
+   GOLF 커스터마이징 목록: 지도는 항상 **선택 골프장에 고정**(임의 지점 탭
+   비활성화), 마커는 **선택된 곳 하나만**(`GolfMarkerLayer`, 이름 탭→상세
+   예보), 상단 바(바람 정보+골프장명 칩)는 **항상** 표시(바다윈디는 탭해야
+   뜨는 임시 커서 바였음), `pointSeaLocation`은 미사용이지만 diff 최소화를
+   위해 그대로 남겨 둠.
+3. **완전히 골프 전용이라 바다윈디에 없는 파일**(그대로 유지, 병합 대상
+   아님): `features/golf/presentation/widgets/golf_marker_layer.dart`,
+   `golf_search_sheet.dart`, `features/golf/data/`, `features/golf/logic/`.
 
 ## 진행 현황 (2026-07 기준)
 
@@ -78,6 +108,16 @@ dart format lib test     # 커밋 전 포맷
   Natural Earth 10m). 해안선(`CoastlinePainter`)·도시 라벨(`MapCityLabelLayer`)·
   골프장 마커(`GolfMarkerLayer`)는 **모두 실제 WGS84 좌표**를 쓰고 경도 보정
   `kMapLonShift`는 **0**이어야 서로 정확히 겹친다(바꾸면 세 레이어 모두 같은 값).
+- **탭은 실제로 열기 전까지 빌드하지 않는다**(`app/app.dart`의 `_visited`
+  집합). `IndexedStack`은 기본적으로 자식을 전부 즉시 빌드하는데, 그러면
+  앱 시작 시 홈과 동시에 Windy 탭의 무거운 바람장(16일치) 요청까지 나가
+  대역폭을 다퉈 홈 첫 화면이 10초 넘게 늦어졌다(실측 원인). 새 탭을
+  추가해도 이 지연 빌드 패턴을 유지한다.
+- **독립적인 네트워크 호출은 순차 대기(await 연쇄) 대신 동시에 시작**한다
+  (`Future.wait` 또는 두 Future를 먼저 만들어 두고 나중에 awit). 기상청
+  단기예보·초단기예보·초단기실황 3개 호출(`data_go_kr_kma_repository.dart`)과
+  land+kma 예보 병합(`kma_weather/presentation/providers.dart`)이 이 패턴을
+  쓴다 — 예전엔 순차 대기라 왕복 지연이 그대로 누적됐다.
 - **강제 업데이트 게이트**(`core/remote_config/`): `remote_config/app_gate.json`의
   `forceUpgrade`를 true로 바꾸면 앱 재배포 없이 모든 기기에서 실행이 막히고 업데이트
   안내만 뜬다(무료→광고 전환용). 배포 전 `Env.forceUpgradeConfigUrl`과

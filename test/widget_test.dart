@@ -5,6 +5,7 @@ import 'package:golf_windy/core/storage/prefs.dart';
 import 'package:golf_windy/features/kma_weather/data/repositories/mock_land_weather_repository.dart';
 import 'package:golf_windy/features/kma_weather/presentation/providers.dart';
 import 'package:golf_windy/features/weather/data/repositories/mock_wind_field_repository.dart';
+import 'package:golf_windy/features/weather/presentation/weather_screen.dart';
 import 'package:golf_windy/features/weather/presentation/wind_field_providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,7 +25,8 @@ Future<Widget> buildApp() async {
       landWeatherRepositoryProvider.overrideWithValue(
         MockLandWeatherRepository(),
       ),
-      // Windy 탭은 IndexedStack에서 항상 빌드되므로 바람장도 목으로 주입한다.
+      // Windy 탭은 실제로 열어야만 빌드되지만(지연 빌드), 탭 전환 시 실
+      // 네트워크를 타지 않도록 바람장도 목으로 주입해 둔다.
       windFieldRepositoryProvider.overrideWithValue(MockWindFieldRepository()),
       // 실 네트워크 호출 없이 항상 "강제 업데이트 아님"으로 응답하게 한다.
       appGateRepositoryProvider.overrideWithValue(
@@ -59,6 +61,23 @@ void main() {
 
     // 목록의 첫 골프장(기본 선택)이 보인다.
     expect(find.text('라데나골프클럽'), findsWidgets);
+  });
+
+  testWidgets('Windy 탭은 실제로 열기 전까지 빌드되지 않는다(지연 빌드)', (tester) async {
+    await tester.pumpWidget(await buildApp());
+    await tester.pumpAndSettle();
+
+    // 홈만 보이는 상태에서는 Windy 탭(WeatherScreen)이 아직 빌드되지
+    // 않는다 — 앱 시작 시 4탭이 전부 즉시 빌드되며 Windy의 무거운 바람장
+    // 요청이 홈과 동시에 나가 홈 첫 화면이 10초 넘게 늦어지던 문제의 수정.
+    expect(find.byType(WeatherScreen), findsNothing);
+
+    await tester.tap(find.text('Windy'));
+    // Windy는 파티클 애니메이션 Ticker가 있어 pumpAndSettle을 쓰지 않는다.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(find.byType(WeatherScreen), findsOneWidget);
   });
 
   testWidgets('설정 탭에 템플릿/정보가 보인다', (tester) async {

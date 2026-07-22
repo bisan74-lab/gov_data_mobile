@@ -65,45 +65,48 @@ class DataGoKrKmaRepository implements KmaWeatherRepository {
 
   /// 세 서비스를 병합해 시간별 예보를 만든다. 우선순위는
   /// **초단기실황(현재) > 초단기예보(6h) > 단기예보(3일)**로, 근접 시간일수록
-  /// 더 정밀한 값이 덮어쓴다. 초단기 두 호출은 best-effort라 실패해도
-  /// 단기예보만으로 정상 동작한다.
+  /// 더 정밀한 값이 덮어쓴다. 세 호출은 서로 결과가 독립적이라 **동시에**
+  /// 쏘고(Future.wait), 초단기 두 개는 best-effort라 실패해도 단기예보만으로
+  /// 정상 동작한다. (예전엔 세 번 순차 대기해 왕복 지연이 3배로 누적됐다.)
   @override
   Future<KmaForecast> fetchForecast(SeaLocation location) async {
     final (nx, ny) = _latLonToGrid(location.latitude, location.longitude);
     final now = DateTime.now();
-    final byTime = <String, Map<String, String>>{};
-
-    // 1) 단기예보(3일) — 뼈대.
     final (bDate, bTime) = _latestBaseDateTime(now);
-    final base = await _fetch(_vilagePath, nx, ny, bDate, bTime);
+    final (fDate, fTime) = _ultraFcstBase(now);
+    final (nDate, nTime) = _ncstBase(now);
+
+    final results = await Future.wait([
+      _fetch(_vilagePath, nx, ny, bDate, bTime), // 실패 시 그대로 던진다.
+      _fetch(
+        _ultraFcstPath,
+        nx,
+        ny,
+        fDate,
+        fTime,
+      ).catchError((_) => const <Map<String, dynamic>>[]),
+      _fetch(
+        _ncstPath,
+        nx,
+        ny,
+        nDate,
+        nTime,
+      ).catchError((_) => const <Map<String, dynamic>>[]),
+    ]);
+
+    final base = results[0];
     if (base.isEmpty) {
       throw const FormatException('기상청 단기예보 응답에 데이터가 없음');
     }
-    _collect(byTime, base, valueKey: 'fcstValue');
 
-    // 2) 초단기예보(6h) — 근접 시간을 더 정밀한 값으로 덮어쓴다.
-    try {
-      final (fDate, fTime) = _ultraFcstBase(now);
-      _collect(
-        byTime,
-        await _fetch(_ultraFcstPath, nx, ny, fDate, fTime),
-        valueKey: 'fcstValue',
-      );
-    } catch (_) {
-      // 초단기예보 실패 — 단기예보 값 유지.
-    }
-
-    // 3) 초단기실황 — 현재 시각 관측값으로 덮어쓴다.
-    try {
-      final (nDate, nTime) = _ncstBase(now);
-      _collect(
-        byTime,
-        await _fetch(_ncstPath, nx, ny, nDate, nTime),
-        valueKey: 'obsrValue',
-      );
-    } catch (_) {
-      // 초단기실황 실패 — 무시.
-    }
+    final byTime = <String, Map<String, String>>{};
+    _collect(byTime, base, valueKey: 'fcstValue'); // 1) 단기예보 — 뼈대.
+    _collect(
+      byTime,
+      results[1],
+      valueKey: 'fcstValue',
+    ); // 2) 초단기예보 — 근접 시간 덮어씀.
+    _collect(byTime, results[2], valueKey: 'obsrValue'); // 3) 초단기실황 — 최우선.
 
     final keys = byTime.keys.toList()..sort();
     final hourly = [
