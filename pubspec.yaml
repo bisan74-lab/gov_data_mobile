@@ -32,5 +32,5 @@ flutter_launcher_icons:
   android: true
   ios: false # iOS 확장 시 true로 변경
   image_path: "assets/icon/app_icon.png"
-  adaptive_icon_background: "#0b3d1f"
+  adaptive_icon_background: "#B4091C"
   adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
