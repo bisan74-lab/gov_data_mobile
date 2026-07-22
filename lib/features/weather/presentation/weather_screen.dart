@@ -606,8 +606,25 @@ class _WindMapAreaState extends State<_WindMapArea> {
           // 모든 레이어가 같은 투영(mapSize 기준)을 공유해 서로 어긋나지 않는다.
           final projection = MapProjection(mapViewBounds, mapSize);
           // 검색 이동 시 재센터 계산에 쓰도록 최신 화면·투영을 저장.
+          //
+          // GOLF: 버그 원인 — Windy가 아닌 다른 탭이 보일 때는 하단
+          // 내비게이션 바가 떠 있어 Scaffold 본문(=이 IndexedStack)이 그만큼
+          // 좁아지는데, `IndexedStack`은 화면 밖 탭도 계속 레이아웃한다.
+          // 그래서 다른 탭에서 골프장을 바꾸면(`ref.listen` → 즉시
+          // `_onFocusRequested`) 이 좁아진(실제보다 낮은) 화면 크기로 중심을
+          // 계산해 버려, Windy 탭으로 돌아와도 마커가 엉뚱한 위치에 남았다.
+          // 화면 크기가 실제로 바뀌면(예: 내비게이션 바가 사라지며 Windy
+          // 탭이 다시 커짐) 마지막 포커스 대상으로 다시 중심을 맞춘다.
+          final screenChanged = _lastScreen != null && _lastScreen != screen;
           _lastScreen = screen;
           _lastProjection = projection;
+          if (screenChanged &&
+              _didInitTransform &&
+              widget.focusTarget.value != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _onFocusRequested();
+            });
+          }
           final fieldRect = projection.rectFor(
             LatLonBounds(
               minLat: field.minLat,

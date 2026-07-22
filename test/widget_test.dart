@@ -1,9 +1,13 @@
 import 'package:golf_windy/app/app.dart';
+import 'package:golf_windy/app/app_tab_provider.dart';
 import 'package:golf_windy/core/remote_config/app_gate_provider.dart';
 import 'package:golf_windy/core/remote_config/app_gate_repository.dart';
 import 'package:golf_windy/core/storage/prefs.dart';
+import 'package:golf_windy/features/golf/presentation/widgets/golf_marker_layer.dart';
 import 'package:golf_windy/features/kma_weather/data/repositories/mock_land_weather_repository.dart';
 import 'package:golf_windy/features/kma_weather/presentation/providers.dart';
+import 'package:golf_windy/features/locations/data/sample_locations.dart';
+import 'package:golf_windy/features/locations/presentation/providers.dart';
 import 'package:golf_windy/features/weather/data/repositories/mock_wind_field_repository.dart';
 import 'package:golf_windy/features/weather/presentation/weather_screen.dart';
 import 'package:golf_windy/features/weather/presentation/wind_field_providers.dart';
@@ -13,6 +17,42 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// [buildApp]과 같은 오버라이드를 쓰되, `container.read(...).select(...)`로
+/// 직접 지역을 바꿀 수 있도록 [ProviderContainer]를 노출한다.
+Future<ProviderContainer> buildAppContainer() async {
+  SharedPreferences.setMockInitialValues({});
+  final prefs = await SharedPreferences.getInstance();
+  return ProviderContainer(
+    overrides: [
+      sharedPreferencesProvider.overrideWithValue(prefs),
+      landWeatherRepositoryProvider.overrideWithValue(
+        MockLandWeatherRepository(),
+      ),
+      windFieldRepositoryProvider.overrideWithValue(MockWindFieldRepository()),
+      appGateRepositoryProvider.overrideWithValue(
+        AppGateRepository(
+          client: MockClient((_) async => http.Response('{}', 200)),
+        ),
+      ),
+    ],
+  );
+}
+
+/// Windy 탭 지도 위 골프장 마커(초록 점)의 화면 중심 좌표.
+Offset? golfMarkerDotCenter(WidgetTester tester) {
+  final dotFinder = find.descendant(
+    of: find.byType(GolfMarkerLayer),
+    matching: find.byWidgetPredicate(
+      (w) =>
+          w is Container &&
+          w.decoration is BoxDecoration &&
+          (w.decoration as BoxDecoration).shape == BoxShape.circle,
+    ),
+  );
+  if (dotFinder.evaluate().isEmpty) return null;
+  return tester.getCenter(dotFinder.first);
+}
 
 /// 테스트에서는 실 API 대신 목 리포지토리와 인메모리 prefs를 주입한다.
 /// (기상청 키가 없으므로 예보는 Open-Meteo 자리의 목 데이터만 쓴다.)
@@ -78,6 +118,80 @@ void main() {
     await tester.pump(const Duration(milliseconds: 16));
 
     expect(find.byType(WeatherScreen), findsOneWidget);
+  });
+
+  testWidgets('다른 탭에서 골프장을 바꾼 뒤 Windy 탭으로 돌아와도 그 골프장이 화면 가운데로 온다', (
+    tester,
+  ) async {
+    final target = sampleLocations[1];
+
+    // 기준값: Windy 탭이 떠 있는 상태(하단 내비바 없음, 화면 전체 크기)
+    // 에서 곧바로 target을 선택했을 때의 마커 위치.
+    final refContainer = await buildAppContainer();
+    addTearDown(refContainer.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: refContainer,
+        child: const GolfWindyApp(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    refContainer.read(appTabIndexProvider.notifier).state = windyTabIndex;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    refContainer.read(selectedLocationProvider.notifier).select(target);
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+    final refDot = golfMarkerDotCenter(tester);
+    expect(refDot, isNotNull);
+
+    // 재현 시나리오: Windy 탭을 한 번 열어 둔 채(IndexedStack에 살아있는
+    // 상태) 홈 탭으로 돌아간다 — 이때 하단 내비게이션 바가 다시 뜨며
+    // Scaffold 본문이 좁아지는데, `IndexedStack`은 화면 밖 Windy 탭도
+    // 계속 레이아웃한다. 이 좁아진 화면 크기가 남아 있는 채로 골프장을
+    // 바꾸면(재중심이 그 순간 실행됨) 잘못된 크기로 중심을 계산했던
+    // 버그의 회귀 테스트.
+    final reproContainer = await buildAppContainer();
+    addTearDown(reproContainer.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: reproContainer,
+        child: const GolfWindyApp(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    reproContainer.read(appTabIndexProvider.notifier).state = windyTabIndex;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    reproContainer.read(appTabIndexProvider.notifier).state = 0;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    reproContainer.read(selectedLocationProvider.notifier).select(target);
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    reproContainer.read(appTabIndexProvider.notifier).state = windyTabIndex;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    final reproDot = golfMarkerDotCenter(tester);
+    expect(reproDot, isNotNull);
+
+    // 다른 탭에서 바꿨든 Windy 탭에서 바꿨든, 같은 골프장은 같은 화면
+    // 위치(가운데)에 와야 한다.
+    expect(reproDot!.dx, closeTo(refDot!.dx, 1.0));
+    expect(reproDot.dy, closeTo(refDot.dy, 1.0));
   });
 
   testWidgets('설정 탭에 템플릿/정보가 보인다', (tester) async {
