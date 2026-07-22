@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:golf_windy/core/storage/prefs.dart';
 import 'package:golf_windy/features/locations/data/sample_locations.dart';
 import 'package:golf_windy/features/locations/presentation/providers.dart';
@@ -92,6 +94,80 @@ void main() {
     // 공간을 뺀 영역 가운데에 오도록 화면 위쪽으로 당겨져야 한다(세로
     // 이동값이 작아진다).
     expect(afterTy, lessThan(beforeTy));
+  });
+
+  testWidgets('지도 모드에서 우측 상단 칩으로 골프장을 바꾸면 하단 시간바 높이를 뺀 영역 가운데로 온다', (
+    tester,
+  ) async {
+    final target = sampleLocations[1];
+
+    // Phase 1: target을 진입 시 기본 선택 지역으로 미리 저장해, 하단바를
+    // 고려하지 않는 진입 시(`_didInitTransform`) 전체 화면 기준 중심값을
+    // 기준선으로 얻는다.
+    SharedPreferences.setMockInitialValues({
+      'selected_location': jsonEncode(target.toJson()),
+    });
+    final prefsBaseline = await SharedPreferences.getInstance();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefsBaseline),
+          windFieldRepositoryProvider.overrideWithValue(
+            MockWindFieldRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: WeatherScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    double translationY() {
+      final viewer = tester.widget<InteractiveViewer>(
+        find.byType(InteractiveViewer),
+      );
+      return viewer.transformationController!.value.getTranslation().y;
+    }
+
+    final baselineTy = translationY();
+
+    // Phase 2: 기본 지역(첫 골프장)으로 새로 진입해 지도 모드(하단 시간
+    // 스크러버 표시 중)로 만든 뒤, 우측 상단 칩 선택과 같은 경로
+    // (provider.select)로 phase 1과 같은 target으로 바꾼다.
+    SharedPreferences.setMockInitialValues({});
+    final prefsSwitch = await SharedPreferences.getInstance();
+    final container = ProviderContainer(
+      overrides: [
+        sharedPreferencesProvider.overrideWithValue(prefsSwitch),
+        windFieldRepositoryProvider.overrideWithValue(
+          MockWindFieldRepository(),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: WeatherScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(find.byType(Slider), findsOneWidget); // 지도 모드(시간 스크러버 표시 중).
+
+    container.read(selectedLocationProvider.notifier).select(target);
+    await tester.pump(const Duration(milliseconds: 16));
+
+    final switchTy = translationY();
+
+    // 같은 골프장·같은 배율이라도, 지도 모드에서는 하단 시간바 높이를 뺀
+    // 영역 가운데로 맞춰야 하므로 하단바를 고려하지 않는 기준선보다 위로
+    // 당겨져야 한다(세로 이동값이 더 작다).
+    expect(switchTy, lessThan(baselineTy));
   });
 
   testWidgets('지도 마커를 탭하면 선택 지역이 바뀐다', (tester) async {

@@ -281,7 +281,10 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
         setState(() => _forecastPoint = next);
         _pendingRecenter = true;
       } else {
-        _requestFocus(next);
+        // GOLF: 지도 모드에서는 하단에 시간 스크러버가 항상 떠 있으므로,
+        // 그 높이(`_bottomBarHeight`)를 뺀 나머지 지도 영역 가운데로
+        // 맞춘다(상세 표가 열렸을 때와 같은 원칙).
+        _requestFocus(next, bottomInset: _bottomBarHeight);
       }
     });
 
