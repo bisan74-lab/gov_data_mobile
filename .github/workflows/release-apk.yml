@@ -37,18 +37,49 @@ jobs:
           flutter build apk --release
           --dart-define=DATA_GO_KR_API_KEY=${{ secrets.DATA_GO_KR_API_KEY }}
 
-      - name: 태그 계산
+      # 태그와 **버전명**을 함께 계산한다. pubspec의 `version: 0.1.0+1`은
+      # `버전명+빌드번호(versionCode)` 형식이라 `+`를 기준으로 나눈다.
+      # 내려받은 APK 파일만 보고도 어느 버전인지 알 수 있도록 파일명에
+      # 버전명을 넣는다(파일명엔 `+`를 쓰지 않는다 — 일부 환경에서 URL의
+      # `+`가 공백으로 해석돼 다운로드가 깨질 수 있다).
+      - name: 태그·버전 계산
         id: vars
-        run: echo "tag=test-build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(grep -m1 '^version:' pubspec.yaml \
+            | sed 's/^version:[[:space:]]*//' | tr -d '\r')
+          version_name="${version%%+*}"
+          version_code="${version##*+}"
+          tag="test-build-${GITHUB_RUN_NUMBER}"
+          {
+            echo "tag=${tag}"
+            echo "version_name=${version_name}"
+            echo "version_code=${version_code}"
+            echo "apk_name=golfwindy-v${version_name}-${tag}.apk"
+          } >> "$GITHUB_OUTPUT"
+          echo "버전 ${version_name}(빌드 ${version_code}) / 태그 ${tag}"
+
+      - name: APK 파일명에 버전 반영
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             "build/app/outputs/flutter-apk/${{ steps.vars.outputs.apk_name }}"
 
       - name: GitHub Release 생성 및 APK 첨부
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
-          name: 테스트 빌드 ${{ steps.vars.outputs.tag }}
+          name: >-
+            골프윈디 v${{ steps.vars.outputs.version_name }}
+            (${{ steps.vars.outputs.tag }})
           body: |
-            골프윈디 수동 트리거 테스트 빌드입니다. 합성(mock) 데이터로 동작하며,
-            기상청 단기예보 실데이터는 `--dart-define=DATA_GO_KR_API_KEY=...` 로
-            직접 빌드해야 확인할 수 있습니다.
-          files: build/app/outputs/flutter-apk/app-release.apk
+            골프윈디 수동 트리거 테스트 빌드입니다.
+
+            - **버전**: `${{ steps.vars.outputs.version_name }}`
+              (빌드 번호 `${{ steps.vars.outputs.version_code }}`)
+            - **파일**: `${{ steps.vars.outputs.apk_name }}`
+            - **커밋**: `${{ github.sha }}`
+
+            합성(mock) 데이터로 동작하며, 기상청 단기예보 실데이터는
+            `--dart-define=DATA_GO_KR_API_KEY=...` 로 직접 빌드해야
+            확인할 수 있습니다.
+          files: build/app/outputs/flutter-apk/${{ steps.vars.outputs.apk_name }}
           prerelease: true
