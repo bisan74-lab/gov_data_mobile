@@ -60,7 +60,8 @@ Future<void> main(List<String> args) async {
         print('    ✅ 정상 — 위 응답 전체를 개발 세션에 붙여넣으면 필드 매핑을 확정할 수 있습니다.');
       } else if (body.contains('NO_DATA')) {
         print('    ⚠️ 키는 정상, 이 조건에는 데이터가 없습니다.');
-      } else if (body.contains('Unauthorized') || body.contains('SERVICE_KEY')) {
+      } else if (body.contains('Unauthorized') ||
+          body.contains('SERVICE_KEY')) {
         print('    ❌ 키 미동기화 또는 잘못된 키입니다.');
       }
     } catch (e) {

@@ -141,7 +141,7 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
       // 표를 닫으면 지도를 다시 현재 시각(서울 기준) 바람으로 되돌린다.
       final series = _series;
       if (series != null) {
-        _hourOffset = series.indexClosestTo(nowKst());
+        _hourOffset = series.indexAtOrBefore(nowKst());
       }
     });
   }
@@ -151,11 +151,20 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
     if (idx != _hourOffset) setState(() => _hourOffset = idx);
   }
 
+  /// 시간 슬라이더를 잡고 있는 중인지. 드래그 동안에는 지도 히트맵의 고해상도
+  /// 레이어를 굽지 않는다(굽는 비용이 배경의 약 5배라 슬라이더가 밀린다) —
+  /// 손을 떼면 미뤄 둔 고해상도만 그때 채운다.
+  bool _scrubbing = false;
+
+  void _setScrubbing(bool value) {
+    if (value != _scrubbing) setState(() => _scrubbing = value);
+  }
+
   /// 지도 시각을 다시 "지금"(서울 기준)으로 되돌린다.
   void _mapHourToNow() {
     final series = _series;
     if (series == null) return;
-    final idx = series.indexClosestTo(nowKst());
+    final idx = series.indexAtOrBefore(nowKst());
     if (idx != _hourOffset) setState(() => _hourOffset = idx);
   }
 
@@ -206,8 +215,11 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
     if (_series != null) return;
     _series = series;
     // 시계열은 오늘 0시(서울)부터 시작하므로, 지도 기본 시각을 서울 기준
-    // "지금"에 맞춘다(기기 시간대 설정과 무관).
-    _hourOffset = series.indexClosestTo(nowKst());
+    // "지금"에 맞춘다(기기 시간대 설정과 무관). indexClosestTo가 아니라
+    // indexAtOrBefore를 쓴다 — 스텝 간격이 1시간보다 넓으면(서버 데이터는
+    // 앞 48시간만 1시간, 그 뒤는 3시간) 아직 오지 않은 미래 스텝이 "더
+    // 가깝다"고 나와 "지금"이 미래를 가리키는 문제가 있었다.
+    _hourOffset = series.indexAtOrBefore(nowKst());
     final field = series.at(_hourOffset);
     _particles
       ..clear()
@@ -364,6 +376,7 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                     courses: ref.watch(golfCoursesProvider),
                     selectedCourseId: selectedLoc.id,
                     focusTarget: _focusTarget,
+                    scrubbing: _scrubbing,
                   ),
                 ),
                 // GOLF: 상단 바 — **항상** 떠 있다(바다윈디 원본은 탭해야
@@ -395,9 +408,10 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                       child: _MapTimeBar(
                         series: series,
                         offset: _hourOffset,
-                        nowOffset: series.indexClosestTo(nowKst()),
+                        nowOffset: series.indexAtOrBefore(nowKst()),
                         synthetic: result.isSynthetic,
                         onChanged: _setMapHour,
+                        onScrubbing: _setScrubbing,
                         onNow: _mapHourToNow,
                       ),
                     ),
@@ -451,6 +465,7 @@ class _WindMapArea extends StatefulWidget {
     required this.courses,
     required this.selectedCourseId,
     required this.focusTarget,
+    required this.scrubbing,
   });
 
   final WindField field;
@@ -479,13 +494,56 @@ class _WindMapArea extends StatefulWidget {
   final ValueNotifier<({SeaLocation location, double bottomInset})?>
   focusTarget;
 
+  /// 하단 시간 슬라이더를 잡고 있는 중인지. 잡고 있는 동안엔 히트맵의
+  /// 고해상도 핵심영역을 굽지 않는다(드래그가 부드럽도록).
+  final bool scrubbing;
+
   @override
   State<_WindMapArea> createState() => _WindMapAreaState();
 }
 
+/// 히트맵 한 벌 — 전체 bbox 배경(저해상도) + 한반도 핵심영역 고해상도
+/// 오버레이. **배경과 핵심영역을 한 객체로 묶어** 둘이 서로 다른 시각을
+/// 가리키는 상태가 아예 생기지 않게 한다.
+class _HeatmapPair {
+  const _HeatmapPair({required this.background, this.core, required this.time});
+
+  final ui.Image background;
+  final ui.Image? core;
+
+  /// 두 장을 구운 바람장 시각. 이 값이 같아야 한 벌이다.
+  final DateTime time;
+
+  /// 배경은 그대로 두고 핵심영역만 채운 새 한 벌.
+  _HeatmapPair withCore(ui.Image image) =>
+      _HeatmapPair(background: background, core: image, time: time);
+
+  void dispose() {
+    background.dispose();
+    core?.dispose();
+  }
+}
+
 class _WindMapAreaState extends State<_WindMapArea> {
-  ui.Image? _heatmap;
+  /// 현재 그리고 있는 히트맵 한 벌.
+  _HeatmapPair? _heatmap;
   DateTime? _heatmapTime;
+
+  /// 진행 중인 히트맵 빌드의 최신성 토큰 — 시간 스크럽 등으로 빌드가 겹치면
+  /// 낡은 결과를 버린다(시간 비교만으로는 같은 시각의 재빌드 경쟁을 못 거름).
+  int _heatmapRequestId = 0;
+
+  /// 고해상도 오버레이 범위: 남한 전역 + 서해·남해·동해·대한해협·규슈 연안.
+  /// 전체 bbox 래스터보다 훨씬 촘촘한 밀도로 구워 확대해도 뭉개지지 않는다.
+  static const _coreBounds = LatLonBounds(
+    minLat: 28.0,
+    maxLat: 44.0,
+    minLon: 116.0,
+    maxLon: 138.0,
+  );
+  static const _coreTexW = 1100;
+  static const _coreTexH = 800;
+
   final TransformationController _transformController =
       TransformationController();
   // 지도 범위를 동서남북으로 넓힌 만큼, 진입 기본 배율도 조금 올려 남한이
@@ -544,22 +602,95 @@ class _WindMapAreaState extends State<_WindMapArea> {
     super.didUpdateWidget(oldWidget);
     if (widget.field.time != _heatmapTime) {
       _rebuildHeatmap();
+    } else if (oldWidget.scrubbing && !widget.scrubbing) {
+      // 손을 뗐다 — 스크럽 중 미뤄 둔 고해상도만 이제 굽는다.
+      _bakeCoreIfNeeded();
     }
   }
 
+  /// 히트맵을 다시 굽는다.
+  ///
+  /// **시간 슬라이더를 드래그하는 동안엔 배경만 굽는다.** 핵심영역은 배경보다
+  /// 픽셀이 훨씬 많아(1100×800 vs 420×404) 굽는 데 몇 배 더 걸린다. 스크럽할
+  /// 때 매 칸마다 둘 다 구우면 슬라이더가 통째로 밀린다.
+  ///
+  /// 손을 떼면 [_bakeCoreIfNeeded]가 **배경은 그대로 두고 핵심영역만** 채운다
+  /// — 그 시각 배경은 스크럽 중에 이미 구워 놨으므로 다시 구울 이유가 없다.
   Future<void> _rebuildHeatmap() async {
     final field = widget.field;
     final time = field.time;
-    final image = await buildWindHeatmapImage(field);
-    if (!mounted || widget.field.time != time) {
-      image.dispose();
+    final requestId = ++_heatmapRequestId;
+    // 데이터 없는 시각(u/v가 전부 0으로 채워진 결측 스텝)은 색을 입히면
+    // "무풍(보라색)"으로 오해되므로, 아예 히트맵을 만들지 않고 build()가
+    // 회색 오버레이를 그리게 한다.
+    if (!field.hasData) {
+      _heatmap?.dispose();
+      setState(() {
+        _heatmap = null;
+        _heatmapTime = time;
+      });
+      return;
+    }
+    // 드래그 중이면 배경만. 아니면 둘을 **병렬로** 구워 한 번에 교체한다
+    // (각자 아이솔레이트에서 도니 총 시간은 둘 중 긴 쪽 정도). 한 번에
+    // 교체하는 이유: 배경을 먼저 띄우고 핵심영역을 이어서 띄우면, 그 사이
+    // 몇 프레임 동안 새 시각의 배경 위에 직전 시각의 핵심영역이 덮여
+    // 어색하게 보인다.
+    final scrubbing = widget.scrubbing;
+    final built = await Future.wait([
+      buildWindHeatmapImage(field),
+      if (!scrubbing)
+        buildWindHeatmapImage(
+          field,
+          crop: _coreBounds,
+          width: _coreTexW,
+          height: _coreTexH,
+        ),
+    ]);
+    final pair = _HeatmapPair(
+      background: built[0],
+      core: built.length > 1 ? built[1] : null,
+      time: time,
+    );
+    if (!mounted || requestId != _heatmapRequestId) {
+      pair.dispose();
       return;
     }
     _heatmap?.dispose();
     setState(() {
-      _heatmap = image;
+      _heatmap = pair;
       _heatmapTime = time;
     });
+  }
+
+  /// 스크럽이 끝난 뒤, **배경은 그대로 두고 핵심영역만** 채운다.
+  ///
+  /// 이미 이 시각의 배경을 갖고 있으므로 다시 굽지 않는다 — 굽는 것은
+  /// 핵심영역 하나뿐이라 스크럽 중 절약한 비용이 마지막에 한 번만 청구된다.
+  Future<void> _bakeCoreIfNeeded() async {
+    final field = widget.field;
+    final current = _heatmap;
+    // 배경이 없거나(데이터 없는 시각), 이미 핵심영역이 있거나, 배경이 다른
+    // 시각의 것이면 여기서 할 일이 없다(뒷 경우는 _rebuildHeatmap이 맡는다).
+    if (current == null || current.core != null || current.time != field.time) {
+      return;
+    }
+    final requestId = ++_heatmapRequestId;
+    final core = await buildWindHeatmapImage(
+      field,
+      crop: _coreBounds,
+      width: _coreTexW,
+      height: _coreTexH,
+    );
+    // 그새 시각이 바뀌었거나 화면이 사라졌으면 버린다. 배경은 _heatmap이
+    // 그대로 들고 있으므로 여기서 dispose하면 안 된다.
+    if (!mounted ||
+        requestId != _heatmapRequestId ||
+        !identical(_heatmap, current)) {
+      core.dispose();
+      return;
+    }
+    setState(() => _heatmap = current.withCore(core));
   }
 
   @override
@@ -618,6 +749,29 @@ class _WindMapAreaState extends State<_WindMapArea> {
           final screenChanged = _lastScreen != null && _lastScreen != screen;
           _lastScreen = screen;
           _lastProjection = projection;
+          // 현재 화면에 실제로 보이는 위경도 범위(뷰포트). InteractiveViewer의
+          // 변환(이동+배율)을 역산해 화면 네 모서리가 mapSize 좌표계에서
+          // 어디에 해당하는지 구한 뒤 위경도로 바꾼다. 라벨 표시 개수 제한이
+          // 이 범위 "안"에서만 경쟁하게 해, 깊이 확대해도(먼 지역의 높은
+          // 랭크 도시가 예산을 다 써버려 화면엔 아무 라벨도 안 남는 문제 없이)
+          // 화면 안의 지역명이 항상 채워지게 한다.
+          final tm = _transformController.value;
+          final txy = tm.getTranslation();
+          final vs = tm.getMaxScaleOnAxis() <= 0 ? 1.0 : tm.getMaxScaleOnAxis();
+          Offset toChild(Offset screenPt) =>
+              Offset((screenPt.dx - txy.x) / vs, (screenPt.dy - txy.y) / vs);
+          final vTopLeft = toChild(Offset.zero);
+          final vBottomRight = toChild(Offset(screen.width, screen.height));
+          final visibleBounds = LatLonBounds(
+            minLat: projection.latFor(
+              vBottomRight.dy.clamp(0.0, mapSize.height),
+            ),
+            maxLat: projection.latFor(vTopLeft.dy.clamp(0.0, mapSize.height)),
+            minLon: projection.lonFor(vTopLeft.dx.clamp(0.0, mapSize.width)),
+            maxLon: projection.lonFor(
+              vBottomRight.dx.clamp(0.0, mapSize.width),
+            ),
+          );
           if (screenChanged &&
               _didInitTransform &&
               widget.focusTarget.value != null) {
@@ -678,10 +832,20 @@ class _WindMapAreaState extends State<_WindMapArea> {
                   if (heatmap != null)
                     CustomPaint(
                       painter: WindHeatmapPainter(
-                        image: heatmap,
+                        image: heatmap.background,
                         dstRect: fieldRect,
+                        coreImage: heatmap.core,
+                        coreDstRect: projection.rectFor(_coreBounds),
                       ),
                       size: mapSize,
+                    )
+                  else if (!field.hasData)
+                    // 모델의 실제 예보 범위를 넘는 시각(예: 요청한 16일 중
+                    // 실제로 예보가 없는 마지막 하루)엔 무풍(보라색)으로
+                    // 오해하지 않도록 회색으로 "데이터 없음"을 표시한다.
+                    Positioned.fromRect(
+                      rect: fieldRect,
+                      child: const ColoredBox(color: Color(0x993A3F46)),
                     ),
                   // RepaintBoundary로 감싸지 않는다 — 감싸면 base 해상도로
                   // 래스터화된 뒤 확대되어 흐려지고, 1/scale 두께가 사라진다.
@@ -697,25 +861,33 @@ class _WindMapAreaState extends State<_WindMapArea> {
                     ),
                     size: mapSize,
                   ),
-                  Positioned.fromRect(
-                    rect: fieldRect,
-                    // 파티클만 매 프레임 다시 그려지도록 경계를 둔다.
-                    child: RepaintBoundary(
-                      child: CustomPaint(
-                        painter: WindMapPainter(
-                          particles: widget.particles,
-                          // 순백이 아니라 살짝 어두운 회청색으로 은은하게
-                          // (Windy처럼 흰 선이 과하게 밝지 않게).
-                          color: const Color(0xFFAEB9C6),
-                          repaint: widget.repaint,
+                  // 데이터 없는(회색) 시각엔 흐름선도 함께 숨긴다 — 안 그러면
+                  // 이전 실데이터 시각의 흐름이 멈춘 채로 회색 위에 남아
+                  // "데이터 없음"이라는 신호와 모순돼 보인다.
+                  if (field.hasData)
+                    Positioned.fromRect(
+                      rect: fieldRect,
+                      // 파티클만 매 프레임 다시 그려지도록 경계를 둔다.
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: WindMapPainter(
+                            particles: widget.particles,
+                            // 순백이 아니라 살짝 어두운 회청색으로 은은하게
+                            // (Windy처럼 흰 선이 과하게 밝지 않게).
+                            color: const Color(0xFFAEB9C6),
+                            repaint: widget.repaint,
+                          ),
+                          size: fieldRect.size,
                         ),
-                        size: fieldRect.size,
                       ),
                     ),
-                  ),
                   // 지도 앱처럼 도시 이름만 확대 단계별로 표시(항구 점 라벨은
                   // 제거해 깔끔하게). 지역 선택은 우측 상단 지역 선택 버튼으로 한다.
-                  MapCityLabelLayer(projection: projection, scale: _scale),
+                  MapCityLabelLayer(
+                    projection: projection,
+                    scale: _scale,
+                    visibleBounds: visibleBounds,
+                  ),
                   // GOLF: 선택된 골프장 하나만 초록 마커 + 이름으로 표시한다.
                   // 이름을 탭하면 그 골프장의 상세 예보로 들어간다.
                   GolfMarkerLayer(
@@ -910,12 +1082,17 @@ class _MapTimeBar extends StatelessWidget {
     required this.nowOffset,
     required this.synthetic,
     required this.onChanged,
+    required this.onScrubbing,
     required this.onNow,
   });
 
   final WindFieldSeries series;
   final int offset;
   final int nowOffset;
+
+  /// 슬라이더를 잡았을 때 true, 놓았을 때 false. 잡고 있는 동안에는 지도가
+  /// 고해상도 레이어를 굽지 않아 드래그가 부드럽다.
+  final ValueChanged<bool> onScrubbing;
 
   /// 실데이터 호출 실패로 합성(목업) 바람이 표시 중인지. 사용자에게 명확히
   /// 알려 실데이터(윈디)와 비교하다 혼동하지 않게 한다.
@@ -1073,6 +1250,8 @@ class _MapTimeBar extends StatelessWidget {
                         min: 0,
                         max: maxIdx.toDouble(),
                         onChanged: (v) => onChanged(v.round()),
+                        onChangeStart: (_) => onScrubbing(true),
+                        onChangeEnd: (_) => onScrubbing(false),
                       ),
                     ),
                   ),

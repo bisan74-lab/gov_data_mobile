@@ -37,8 +37,10 @@ void main() {
     });
   });
 
-  group('WindField.sample (쌍선형 보간)', () {
-    // 2x2 격자: (lat,lon) 코너마다 다른 u값, 나머지는 0.
+  group('WindField.sample (쌍3차 보간, 2×2 격자에선 쌍선형과 동일)', () {
+    // 2x2 격자: (lat,lon) 코너마다 다른 u값, 나머지는 0. 격자가 축당 2점뿐이라
+    // 접선을 추정할 이웃점이 없어 쌍3차(Hermite)가 자동으로 시컨트(=쌍선형)로
+    // 대체된다 — 이 경우엔 예전 쌍선형과 값이 같다.
     final field = WindField(
       time: DateTime(2026, 7, 16),
       minLat: 0,
@@ -66,6 +68,62 @@ void main() {
     test('범위 밖은 null을 돌려준다', () {
       expect(field.sample(-1, 5), isNull);
       expect(field.sample(5, 11), isNull);
+    });
+
+    test('lats/lons를 안 주면 균일 격자로 채워지고 hasData 기본값은 true다', () {
+      expect(field.lats, [0, 10]);
+      expect(field.lons, [0, 10]);
+      expect(field.hasData, isTrue);
+    });
+
+    test('hasData: false로 만들면 그대로 유지된다(결측 스텝 표시용)', () {
+      final missing = WindField(
+        time: DateTime(2026, 7, 16),
+        minLat: 0,
+        maxLat: 10,
+        minLon: 0,
+        maxLon: 10,
+        latSteps: 2,
+        lonSteps: 2,
+        u: [0, 0, 0, 0],
+        v: [0, 0, 0, 0],
+        hasData: false,
+      );
+      expect(missing.hasData, isFalse);
+    });
+  });
+
+  group('WindFieldSeries.indexAtOrBefore', () {
+    WindField stepAt(int hour) => WindField(
+      time: DateTime(2026, 7, 16, hour),
+      minLat: 0,
+      maxLat: 10,
+      minLon: 0,
+      maxLon: 10,
+      latSteps: 2,
+      lonSteps: 2,
+      u: [0, 0, 0, 0],
+      v: [0, 0, 0, 0],
+    );
+
+    test('아직 오지 않은 미래 스텝이 더 "가까워도" 지나온 마지막 스텝을 고른다', () {
+      final series = WindFieldSeries(
+        hourly: [
+          for (final h in [0, 3, 6]) stepAt(h),
+        ],
+      );
+      // 05:59는 06시(인덱스 2)에 더 가깝지만 06시는 아직 오지 않았으므로
+      // 03시(인덱스 1)를 골라야 한다.
+      expect(series.indexAtOrBefore(DateTime(2026, 7, 16, 5, 59)), 1);
+    });
+
+    test('모든 스텝이 미래면 첫 스텝을 쓴다', () {
+      final series = WindFieldSeries(
+        hourly: [
+          for (final h in [3, 6]) stepAt(h),
+        ],
+      );
+      expect(series.indexAtOrBefore(DateTime(2026, 7, 16)), 0);
     });
   });
 

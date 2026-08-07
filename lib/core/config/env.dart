@@ -23,11 +23,18 @@ class Env {
 
   /// 지도용 바람장 격자 데이터(서버가 미리 뽑아 둔 정적 파일) URL.
   ///
-  /// 비어 있으면(기본) 앱이 Open-Meteo를 직접 호출해 바람장을 만든다. 나중에
-  /// GitHub Actions 크론으로 `wind_field.json.gz`를 릴리스에 올리는 구조를 붙이면
-  /// 이 값을 그 릴리스 URL로 채운다(사용자 기기의 Open-Meteo 다지점 호출 회피).
-  /// `--dart-define=WIND_DATA_URL=...` 로 재정의 가능.
-  static const windDataUrl = String.fromEnvironment('WIND_DATA_URL');
+  /// GitHub Actions 크론(`.github/workflows/wind-data.yml` → `tool/fetch_wind.py`)이
+  /// 이 저장소의 롤링 릴리스(`wind-data`)에 `wind_field.json.gz`를 올리고,
+  /// 앱은 이 URL 하나만 내려받는다(사용자 기기가 Open-Meteo를 직접 다지점
+  /// 호출하지 않아 분당 호출 한도와 무관해진다). 파일을 못 받으면(아직
+  /// 워크플로가 한 번도 안 돌았거나 네트워크 실패) 앱이 Open-Meteo 직접
+  /// 호출로 자동 폴백한다. `--dart-define=WIND_DATA_URL=...` 로 재정의 가능.
+  static const windDataUrl = String.fromEnvironment(
+    'WIND_DATA_URL',
+    defaultValue:
+        'https://github.com/bisan74-lab/gov_data_mobile/releases/'
+        'download/wind-data/wind_field.json.gz',
+  );
 
   /// 강제 업데이트 게이트 설정(JSON)을 받아오는 URL.
   ///

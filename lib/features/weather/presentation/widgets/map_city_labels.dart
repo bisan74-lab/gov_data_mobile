@@ -44,6 +44,7 @@ const List<CityLabel> mapCityLabels = [
   (name: '통영', lat: 34.8544, lon: 128.4331, rank: 2, island: false),
   (name: '경주', lat: 35.8562, lon: 129.2247, rank: 2, island: false),
   (name: '속초', lat: 38.2070, lon: 128.5918, rank: 2, island: false),
+  (name: '사천진항', lat: 37.836, lon: 128.877, rank: 2, island: false),
 
   // rank 1 — 큰 섬(기본 배율에서도 이름을 보인다).
   (name: '강화도', lat: 37.7469, lon: 126.4880, rank: 1, island: true),
@@ -65,6 +66,24 @@ const List<CityLabel> mapCityLabels = [
   (name: '부안', lat: 35.7317, lon: 126.7330, rank: 3, island: false),
   (name: '삼척', lat: 37.4497, lon: 129.1655, rank: 3, island: false),
   (name: '양양', lat: 38.0754, lon: 128.6190, rank: 3, island: false),
+
+  // rank 3 — 주요 낚시 항구(서해·남해·동해). 도시 라벨과 별도로, 실제 배가
+  // 드나드는 항구 이름을 확대하면 볼 수 있게 한다.
+  (name: '강릉항', lat: 37.766, lon: 128.951, rank: 3, island: false),
+  (name: '오천항', lat: 36.418, lon: 126.499, rank: 3, island: false),
+  (name: '무창포항', lat: 36.243, lon: 126.522, rank: 3, island: false),
+  (name: '대천항', lat: 36.325, lon: 126.508, rank: 3, island: false),
+  (name: '영목항', lat: 36.418, lon: 126.353, rank: 3, island: false),
+  (name: '군산항', lat: 35.975, lon: 126.563, rank: 3, island: false),
+  (name: '비응항', lat: 35.978, lon: 126.585, rank: 3, island: false),
+  (name: '여수항', lat: 34.747, lon: 127.739, rank: 3, island: false),
+  (name: '국동항', lat: 34.729, lon: 127.712, rank: 3, island: false),
+  (name: '삼천포항', lat: 34.933, lon: 128.079, rank: 3, island: false),
+  (name: '미조항', lat: 34.686, lon: 128.088, rank: 3, island: false),
+  (name: '녹동항', lat: 34.516, lon: 127.130, rank: 3, island: false),
+  (name: '나로도', lat: 34.485, lon: 127.487, rank: 3, island: false),
+  (name: '마산', lat: 35.196, lon: 128.570, rank: 3, island: false),
+  (name: '팽목항', lat: 34.418, lon: 125.964, rank: 3, island: false),
 
   // rank 3 — 바다 위 섬(많이 확대해야 표시).
   (name: '완도', lat: 34.3110, lon: 126.7550, rank: 3, island: true),
@@ -103,6 +122,7 @@ class MapCityLabelLayer extends StatelessWidget {
     super.key,
     required this.projection,
     required this.scale,
+    required this.visibleBounds,
   });
 
   final MapProjection projection;
@@ -111,22 +131,23 @@ class MapCityLabelLayer extends StatelessWidget {
   /// 확대되지 않고 항상 같은 화면 크기로 보이도록 반대로 축소해 그린다.
   final double scale;
 
-  /// rank·섬 여부별 시작 임계 배율. 기본 배율에서는 최상위 도시만 보이고,
-  /// 확대할수록 더 많은 지역이 드러난다.
-  static double _rankBase(CityLabel c) {
-    if (c.island) {
-      return switch (c.rank) {
-        1 => 1.0,
-        2 => 1.8,
-        _ => 2.8,
-      };
-    }
-    return switch (c.rank) {
-      1 => 1.0,
-      2 => 2.6,
-      _ => 4.4,
-    };
-  }
+  /// 현재 화면에 실제로 보이는 위경도 범위(전체 지도 bbox가 아니라 뷰포트).
+  /// 라벨 표시 개수 제한([_maxVisible])이 이 범위 안의 후보끼리만 경쟁하게
+  /// 한다 — 안 그러면(예전처럼 전체 지도 bbox로 필터링하면) 깊이 확대했을 때
+  /// 서울·부산 같은 원거리 상위 랭크 도시가 예산을 다 차지해, 정작 화면에는
+  /// 후보가 하나도 안 남아 라벨이 전부 사라지는 문제가 있었다.
+  final LatLonBounds visibleBounds;
+
+  /// rank별 시작 임계 배율. 기본 배율(진입 시 약 2.1)에서 이미 15개 이상이
+  /// 보이고, 확대할수록 더 많은 지역이 드러나도록 rank2·rank3을 예전보다
+  /// 훨씬 낮췄다(섬·도시 구분 없이 rank로만 결정 — 섬 여부는 마커 모양에만
+  /// 영향). 예전엔 rank2가 2.6부터라 기본 배율(2.1)에서는 rank1(9개)만
+  /// 보여 15개에 못 미쳤다.
+  static double _rankBase(CityLabel c) => switch (c.rank) {
+    1 => 1.0,
+    2 => 1.25,
+    _ => 1.9,
+  };
 
   /// 같은 등급 안에서도 확대에 따라 라벨이 **한꺼번에가 아니라 하나씩** 늘어나게,
   /// 목록 순서(대략 중요도 순)대로 임계 배율을 조금씩 벌린 값(라벨별 캐시).
@@ -141,7 +162,7 @@ class MapCityLabelLayer extends StatelessWidget {
           final key = '${c.island}_${c.rank}';
           final n = seen[key] ?? 0;
           seen[key] = n + 1;
-          return _rankBase(c) + n * 0.12;
+          return _rankBase(c) + n * 0.08;
         }(),
     ];
     _cached = out;
@@ -157,7 +178,7 @@ class MapCityLabelLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final b = projection.bounds;
+    final b = visibleBounds;
     final th = _thresholds;
 
     // 1) 후보: 임계 배율 통과 + 뷰 범위 안.

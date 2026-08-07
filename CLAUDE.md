@@ -52,7 +52,15 @@ Windy 지도를 이식·개조한 것이다. **골프윈디 커스터마이징�
    나머지 지도 영역 가운데**로 재중심된다 — `focusTarget`
    ValueNotifier가 `(location, bottomInset)` 레코드를 실어 보내고,
    `_measureBottomBar()`가 표 높이를 측정한 뒤 재중심을 실행한다
-   (`_pendingRecenter`/`_requestFocus`/`_onFocusRequested`).
+   (`_pendingRecenter`/`_requestFocus`/`_onFocusRequested`). 화면 크기가
+   실제로 바뀌면(다른 탭 → Windy 탭 전환 등, `IndexedStack`이 화면 밖
+   탭도 계속 레이아웃해 하단 내비바 유무로 크기가 달라짐) 마지막 포커스
+   대상으로 다시 중심을 맞춘다(`screenChanged`).
+   히트맵 스크럽 성능 최적화(`_HeatmapPair`/`_coreBounds`/
+   `_rebuildHeatmap`/`_bakeCoreIfNeeded`, 시간 슬라이더 `onScrubbing`),
+   `visibleBounds` 기반 도시 라벨 뷰포트 필터, `field.hasData` 회색
+   오버레이는 바다윈디 원본 그대로이며 GOLF 커스터마이징이 섞이지
+   않았다(2026-07 재동기화로 반영).
 3. **완전히 골프 전용이라 바다윈디에 없는 파일**(그대로 유지, 병합 대상
    아님): `features/golf/presentation/widgets/golf_marker_layer.dart`,
    `golf_search_sheet.dart`, `features/golf/data/`, `features/golf/logic/`.
@@ -63,7 +71,14 @@ Windy 지도를 이식·개조한 것이다. **골프윈디 커스터마이징�
 설정, Windy 지도 BadaMobile 최신 재동기화(몰입형 UI·16일·bbox 18~57/108~148),
 기상청 **단기예보+초단기예보+초단기실황** 병합 연동(우선순위: 실황>초단기예보>단기예보,
 `data_go_kr_kma_repository.dart`), 풍향(VEC) 반영, 전국 골프장 **실데이터 531곳**.
-`flutter analyze` 0 · `flutter test` 통과 상태 유지.
+2026-07 재동기화로 바람 데이터·지도 색상·성능이 바다윈디 최신본과 다시
+맞춰졌다: 바람장 쌍3차(bicubic) 보간 + 적응형(비균일) 공간·시간 격자,
+히트맵 난류 텍스처·아이솔레이트 병렬 렌더링, 스크럽 중 고해상도 핵심영역
+빌드를 미루는 성능 최적화(지도 날짜이동 체감 속도 개선), `visibleBounds`
+기반 도시 라벨 뷰포트 필터, 골프윈디 자체 `wind-data.yml` 서버 파이프라인
+신설(바다윈디는 비공개 전환 후 별도 공개 데이터 저장소를 쓰지만, 골프윈디
+저장소는 공개라 같은 저장소 롤링 릴리스로 충분). `flutter analyze` 0 ·
+`flutter test` 통과 상태 유지.
 
 **미완/유의**: 실기기 APK는 GitHub Actions `release-apk.yml`로만 가능한데 워크플로가
 기본 브랜치(main)에 있어야 실행되며 현재 main이 비어 있어 트리거 불가(이 개발 환경은
@@ -106,6 +121,16 @@ dart format lib test     # 커밋 전 포맷
 - **`app/app.dart`의 `IndexedStack`에 새 탭을 추가하면 `TickerMode(enabled:
   현재탭)`로 감싸야 한다** — 안 그러면 비활성 탭의 Ticker가 계속 돌아 다른 탭
   위젯 테스트가 멈춘다.
+- **지도 바람장은 서버 파일 우선**(`features/weather/.../github_wind_field_repository.dart`):
+  GitHub Actions 크론(`.github/workflows/wind-data.yml` → `tool/fetch_wind.py`)이
+  Open-Meteo에서 격자(적응형 64×66≈4224점, 핵심 해역은 더 촘촘)를 배치로 받아
+  이 저장소(공개) 롤링 릴리스 `wind-data`의 `wind_field.json.gz`로 올리고,
+  앱은 `Env.windDataUrl`(기본값이 이 릴리스 URL) 파일 하나만 내려받는다. 그래서
+  사용자 기기는 Open-Meteo를 직접 다지점 호출하지 않아 분당 한도와 무관하고,
+  파일을 못 받으면(워크플로 미실행·네트워크 실패) 앱이 Open-Meteo 직접 호출→
+  캐시→합성 순으로 자동 폴백한다. 파일 포맷을 바꾸면 `fetch_wind.py`와
+  `parseWindFieldFile`(및 그 테스트)을 함께 맞춘다. **워크플로는 처음 한 번
+  수동 실행(workflow_dispatch)해야 릴리스가 생긴다** — 그전까진 항상 폴백 경로.
 - 바람 지도(`features/weather/presentation/`)의 `mapViewBounds`
   (`widgets/map_projection.dart`)와 `OpenMeteoWindFieldRepository`의 격자 범위는
   **같은 bbox**(위 18~57, 경 108~148)를 써야 히트맵이 뷰를 채운다. 범위를 바꾸면

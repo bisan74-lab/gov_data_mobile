@@ -81,6 +81,25 @@ WindFieldSeries parseWindFieldFile(Map<String, dynamic> json) {
   final start = DateTime.parse(json['start'] as String);
   final pts = latSteps * lonSteps;
 
+  // fmt 2+: 적응형(비균일) 격자의 실제 축 좌표. 없으면(구버전 fmt 1 파일)
+  // WindField가 minLat/maxLat/latSteps로 균일 격자를 재구성한다.
+  final latsRaw = json['lats'] as List?;
+  final lonsRaw = json['lons'] as List?;
+  final lats = latsRaw?.map((e) => (e as num).toDouble()).toList();
+  final lons = lonsRaw?.map((e) => (e as num).toDouble()).toList();
+
+  // fmt 3+: 시간축도 비균일이다(앞 48시간은 1시간, 그 뒤는 3시간 간격).
+  // stepOffsets는 start로부터의 경과 시간(시간 단위)이라 그대로 더하면 된다.
+  // 없으면(구버전 파일·캐시) stepHours로 균일 간격을 가정해 재구성한다.
+  final offsetsRaw = json['stepOffsets'] as List?;
+  DateTime timeAt(int s) => start.add(
+    Duration(
+      hours: offsetsRaw != null && s < offsetsRaw.length
+          ? (offsetsRaw[s] as num).toInt()
+          : s * stepHours,
+    ),
+  );
+
   final uBytes = base64Decode(json['u'] as String);
   final vBytes = base64Decode(json['v'] as String);
   final u = uBytes.buffer.asInt16List(uBytes.offsetInBytes, uBytes.length ~/ 2);
@@ -89,38 +108,39 @@ WindFieldSeries parseWindFieldFile(Map<String, dynamic> json) {
     throw const FormatException('바람장 파일 배열 길이가 격자·스텝과 맞지 않음');
   }
 
-  // 모델 예보 한계를 넘어 0으로 채워진 꼬리 스텝(무풍=결측 날짜)을 잘라낸다.
-  // 실제 바람장은 수천 격자 중 하나라도 0이 아니므로, 한 스텝이 전부 정확히
-  // 0이면 그 시각은 예보가 없는 것이다(지도 스크러버에 빈 날짜가 안 뜨게).
-  // 서버(fetch_wind.py)도 같은 꼬리를 빼지만, 예전 파일·모델 변동에 대비해
-  // 앱에서도 방어적으로 자른다.
-  var realSteps = steps;
-  while (realSteps > 1) {
-    final base = (realSteps - 1) * pts;
-    var hasData = false;
-    for (var k = 0; k < pts; k++) {
-      if (u[base + k] != 0 || v[base + k] != 0) {
-        hasData = true;
-        break;
-      }
+  // 모델 예보 한계를 넘어 0으로 채워진 스텝(=결측)은 **자르지 않고** 그대로
+  // 남겨(최신·최장 데이터 우선) hasData만 false로 표시한다 — 지도가 이
+  // 스텝을 회색(데이터 없음)으로 그릴 수 있게. valid 배열이 없는 예전 파일은
+  // 격자 전부가 정확히 0인 스텝을 결측으로 간주하는 이전 방식으로 대체한다
+  // (실제 바람장은 수천 격자 중 하나라도 0이 아니므로 이 휴리스틱이 안전하다).
+  final validRaw = json['valid'] as List?;
+  bool hasDataFor(int s) {
+    if (validRaw != null) {
+      return s < validRaw.length && (validRaw[s] as num) != 0;
     }
-    if (hasData) break;
-    realSteps--;
+    final base = s * pts;
+    for (var k = 0; k < pts; k++) {
+      if (u[base + k] != 0 || v[base + k] != 0) return true;
+    }
+    return false;
   }
 
   return WindFieldSeries(
     hourly: [
-      for (var s = 0; s < realSteps; s++)
+      for (var s = 0; s < steps; s++)
         WindField(
-          time: start.add(Duration(hours: s * stepHours)),
+          time: timeAt(s),
           minLat: minLat,
           maxLat: maxLat,
           minLon: minLon,
           maxLon: maxLon,
           latSteps: latSteps,
           lonSteps: lonSteps,
+          lats: lats,
+          lons: lons,
           u: [for (var k = 0; k < pts; k++) u[s * pts + k] / 100.0],
           v: [for (var k = 0; k < pts; k++) v[s * pts + k] / 100.0],
+          hasData: hasDataFor(s),
         ),
     ],
   );
