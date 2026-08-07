@@ -11,6 +11,37 @@ import 'app_tab_provider.dart';
 import 'force_upgrade_screen.dart';
 import 'theme.dart';
 
+/// 앱 전체에 거는 **글자 배율 상한**.
+///
+/// 안드로이드 설정 > 디스플레이 > 글자 크기(또는 접근성 "더 크게")를 올리면
+/// 앱의 모든 텍스트가 그 배율만큼 커진다. 배율이 2.0까지 가면 값을 촘촘히
+/// 담는 화면(상세 예보 표·홈 카드·설정)에서 글자가 겹치거나 화면 밖으로
+/// 넘쳐 **오히려 못 읽게** 된다(바다윈디에서 실제 사용자 제보로 확인된
+/// 문제라, 골프윈디도 같은 방식으로 미리 막는다).
+///
+/// 화면마다 따로 대응하는 것도 방법이지만 같은 종류가 앱 곳곳에 있어 끝이
+/// 없다 — 여기서 한 번 막는 것이 확실하다.
+///
+/// **대가는 분명하다** — 사용자의 접근성 설정을 일부 무시한다. 그래서 값을
+/// 함부로 낮추지 말 것(바다윈디는 1.3으로 시작했다가 "너무 작다"는 제보를
+/// 받아 1.5로 올렸다). 이 값을 바꾸면 반드시
+/// `test/features/text_scale_layout_test.dart`를 돌려 표·설정·메뉴가
+/// 버티는지 확인한다.
+const double kMaxTextScale = 1.5;
+
+/// [kMaxTextScale]을 적용한다. `MaterialApp.builder`에 그대로 넘기면 앱 안
+/// 모든 화면에 걸린다. **테스트 하네스도 같은 함수를 써야** 실제 화면과 같은
+/// 조건으로 검사된다.
+Widget clampAppTextScale(BuildContext context, Widget? child) {
+  final mq = MediaQuery.of(context);
+  return MediaQuery(
+    data: mq.copyWith(
+      textScaler: mq.textScaler.clamp(maxScaleFactor: kMaxTextScale),
+    ),
+    child: child ?? const SizedBox.shrink(),
+  );
+}
+
 /// 앱 진입점. `appGateProvider`가 강제 업데이트 상태(`forceUpgrade: true`)를
 /// 돌려주면 [AppShell] 대신 [ForceUpgradeScreen]을 띄워 실행을 막는다 —
 /// 무료 배포본을 나중에 광고 버전으로 전환할 때, 앱 재배포 없이
@@ -30,6 +61,8 @@ class GolfWindyApp extends ConsumerWidget {
       theme: buildLightTheme(skin.seed),
       darkTheme: buildDarkTheme(skin.seed),
       themeMode: themeMode,
+      // 모든 화면에 한 번에 적용된다([kMaxTextScale] 참고).
+      builder: clampAppTextScale,
       home: gateAsync.when(
         data: (gate) => gate.forceUpgrade
             ? ForceUpgradeScreen(config: gate)

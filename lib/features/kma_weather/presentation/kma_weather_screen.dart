@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/compact_text_scale.dart';
 import '../../locations/data/models/sea_location.dart';
 import '../../locations/presentation/providers.dart';
 import '../../locations/presentation/widgets/region_selector_action.dart';
@@ -286,11 +287,24 @@ class _HourlyStrip extends StatelessWidget {
 
   final List<WeatherHour> hours;
 
+  /// 배율 1.0에서 카드가 필요한 높이. 글자가 커지면 아래 [build]가 이
+  /// 값을 배율만큼 늘려 준다(고정해 두면 칸을 뚫는다).
+  static const double _baseHeight = 156;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // 폭 58px 고정 칸이라 앱 상한(1.5)에서도 글자가 칸을 뚫는다 — 이 칸만
+    // 1.3으로 한 번 더 누르고([CompactTextScale]), **남은 배율만큼 높이를
+    // 늘려** 세로로도 넘치지 않게 한다. 가로 스크롤 목록이라 높이가 조금
+    // 늘어도 본문 배치가 깨지지 않는다.
+    final scaled =
+        MediaQuery.textScalerOf(
+          context,
+        ).clamp(maxScaleFactor: kCompactMaxTextScale).scale(14) /
+        14;
     return SizedBox(
-      height: 156,
+      height: _baseHeight * scaled,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: hours.length,
@@ -298,48 +312,50 @@ class _HourlyStrip extends StatelessWidget {
         itemBuilder: (context, i) {
           final h = hours[i];
           final night = h.time.hour < 6 || h.time.hour >= 19;
-          return Container(
-            width: 58,
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${h.precipProbPct}%',
-                  style: TextStyle(
-                    color: scheme.primary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
+          return CompactTextScale(
+            child: Container(
+              width: 58,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '${h.precipProbPct}%',
+                    style: TextStyle(
+                      color: scheme.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                WeatherIcon(code: h.weatherCode, size: 30, night: night),
-                Text(
-                  i == 0 ? '지금' : formatHm(h.time),
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-                Text(
-                  '${h.tempC.round()}°',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                // 바람 특화: 풍향 화살표 + 풍속.
-                WindArrow(
-                  directionDeg: h.windDirDeg,
-                  size: 18,
-                  color: scheme.primary,
-                ),
-                Text(
-                  '${h.windSpeedMs.toStringAsFixed(0)}m/s',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600),
-                ),
-              ],
+                  WeatherIcon(code: h.weatherCode, size: 30, night: night),
+                  Text(
+                    i == 0 ? '지금' : formatHm(h.time),
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                  Text(
+                    '${h.tempC.round()}°',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  // 바람 특화: 풍향 화살표 + 풍속.
+                  WindArrow(
+                    directionDeg: h.windDirDeg,
+                    size: 18,
+                    color: scheme.primary,
+                  ),
+                  Text(
+                    '${h.windSpeedMs.toStringAsFixed(0)}m/s',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         },

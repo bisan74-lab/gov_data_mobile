@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/compact_text_scale.dart';
 import '../../golf/data/models/golf_course.dart';
 import '../../golf/logic/golf_advice.dart';
 import '../../golf/presentation/providers.dart';
@@ -183,33 +184,39 @@ class _RoundIndexCard extends StatelessWidget {
           colors: [color, color.withValues(alpha: 0.72)],
         ),
       ),
+      // 본문 카드라 배율을 누르지 않고(앱 상한 1.5 그대로) 레이아웃을
+      // 유연하게 둔다 — 왼쪽 글자 묶음이 [Expanded]로 남는 폭을 갖고,
+      // 큰 글자에서는 줄바꿈으로 흡수된다(예전엔 폭이 고정이라 넘쳤다).
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '라운딩 지수',
-                style: TextStyle(color: Colors.white, fontSize: 13),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '$index/10  ${roundingLabel(index)}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 30,
-                  fontWeight: FontWeight.bold,
-                  height: 1.1,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '라운딩 지수',
+                  style: TextStyle(color: Colors.white, fontSize: 13),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${rep.tempC.round()}°  ·  강수 ${rep.precipProbPct}%',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.92)),
-              ),
-            ],
+                const SizedBox(height: 2),
+                Text(
+                  '$index/10  ${roundingLabel(index)}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    fontWeight: FontWeight.bold,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${rep.tempC.round()}°  ·  강수 ${rep.precipProbPct}%',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.92)),
+                ),
+              ],
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 12),
           Column(
             children: [
               WindArrow(
@@ -397,24 +404,37 @@ class _RoundConditionCard extends StatelessWidget {
         color: scheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          for (final (icon, label, value) in items)
-            Column(
-              children: [
-                Icon(icon, size: 20, color: scheme.primary),
-                const SizedBox(height: 4),
-                Text(value, style: Theme.of(context).textTheme.titleSmall),
-                Text(
-                  label,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+      // 아이콘+값+라벨 네 칸이 한 줄에 나란히 서는 촘촘한 지표라, 앱 상한
+      // (1.5)에서는 가로로 넘친다. 이 칸만 1.3으로 한 번 더 누르고
+      // ([CompactTextScale]) 각 칸을 [Expanded]로 폭을 나눠 갖게 해,
+      // 넘치는 대신 줄바꿈·말줄임으로 흡수되게 한다.
+      child: CompactTextScale(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final (icon, label, value) in items)
+              Expanded(
+                child: Column(
+                  children: [
+                    Icon(icon, size: 20, color: scheme.primary),
+                    const SizedBox(height: 4),
+                    Text(
+                      value,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-        ],
+              ),
+          ],
+        ),
       ),
     );
   }
