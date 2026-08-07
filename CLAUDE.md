@@ -82,21 +82,25 @@ Windy 지도를 이식·개조한 것이다. **골프윈디 커스터마이징�
 골프윈디만의 fetch_wind.py/크론은 두지 않기로 했다(2026-08 재점검).
 `flutter analyze` 0 · `flutter test` 통과 상태 유지.
 
-**저장소 비공개 전환 진행 중**: `gov_data_mobile`을 최종적으로 비공개로
-돌리기로 했다(현재 공개). 바다윈디도 같은 이유로 코드 저장소는 비공개,
-공개 자산(바람장·게이트 설정)만 별도 공개 데이터 저장소에 두는 방식으로
-전환한 전례가 있어 같은 패턴을 따른다. **막힌 부분**: 이 세션의 GitHub
-연동은 `gov_data_mobile`·`BadaMobile` 두 저장소로만 스코프돼 있어 새
-공개 데이터 저장소(`golfwindy-data` 등, force-upgrade 게이트 `app_gate.json`
-전용 — 바다윈디 것은 버전 체계가 달라 공유 불가) 생성 권한이 없다
-(`create_repository` 403). **사용자가 저장소를 만들어 세션에 추가해
-주면** `Env.forceUpgradeConfigUrl` 기본값을 그리로 옮기고, 그 다음
-`gov_data_mobile`을 비공개로 전환할 수 있다(비공개 전환 자체도 저장소
-설정 변경이라 계정 소유자만 가능 — Danger Zone, 이 세션이 대신 못 함).
-전환 전 참고: **Private 저장소는 GitHub Actions 무료 사용량이 계정
-플랜별로 제한**된다(Public은 무제한) — 릴리스 빌드·테스트가 잦다면
-확인 필요. 전환 후 `test-build-N` APK 다운로드 링크도 로그인(권한 있는
-계정) 없이는 못 받게 된다.
+**저장소 비공개 전환 준비 완료, 실제 전환만 남음**: `gov_data_mobile`을
+최종적으로 비공개로 돌리기로 했다(현재 공개). 바다윈디도 같은 이유로
+코드 저장소는 비공개, 공개 자산(바람장·게이트 설정)만 별도 공개 데이터
+저장소에 두는 방식으로 전환한 전례가 있어 같은 패턴을 따랐다.
+- 바람장: 위에 적었듯 골프윈디 자체 파일 없이 `badawindy-data`를 그대로
+  씀 — 비공개 전환과 무관하게 이미 안전.
+- force-upgrade 게이트: 사용자가 만들어 준 공개 데이터 저장소
+  `bisan74-lab/golfwindy-data`에 `app_gate.json`을 옮기고
+  `Env.forceUpgradeConfigUrl` 기본값을 그리로 갱신 완료
+  (`raw.githubusercontent.com/bisan74-lab/golfwindy-data/main/app_gate.json`,
+  공개 접근 확인함). `gov_data_mobile`의 `remote_config/app_gate.json`은
+  이관 전 원본 기록용으로 남아 있을 뿐 더는 앱이 읽지 않는다 — 값을 바꿀
+  땐 이제 `golfwindy-data` 쪽 파일을 갱신해야 한다.
+- **남은 건 저장소 자체를 Private으로 바꾸는 것뿐**이며, 이건 저장소
+  설정(Danger Zone) 변경이라 계정 소유자만 할 수 있어 이 세션이 대신
+  못 한다. 전환 전 참고: **Private 저장소는 GitHub Actions 무료 사용량이
+  계정 플랜별로 제한**된다(Public은 무제한) — 릴리스 빌드·테스트가
+  잦다면 확인 필요. 전환 후 `test-build-N` APK 다운로드 링크도 로그인
+  (권한 있는 계정) 없이는 못 받게 된다.
 
 **미완/유의**: 실기기 APK는 GitHub Actions `release-apk.yml`로만 가능한데 워크플로가
 기본 브랜치(main)에 있어야 실행되며 현재 main이 비어 있어 트리거 불가(이 개발 환경은
@@ -171,8 +175,11 @@ dart format lib test     # 커밋 전 포맷
   단기예보·초단기예보·초단기실황 3개 호출(`data_go_kr_kma_repository.dart`)과
   land+kma 예보 병합(`kma_weather/presentation/providers.dart`)이 이 패턴을
   쓴다 — 예전엔 순차 대기라 왕복 지연이 그대로 누적됐다.
-- **강제 업데이트 게이트**(`core/remote_config/`): `remote_config/app_gate.json`의
-  `forceUpgrade`를 true로 바꾸면 앱 재배포 없이 모든 기기에서 실행이 막히고 업데이트
-  안내만 뜬다(무료→광고 전환용). 배포 전 `Env.forceUpgradeConfigUrl`과
-  `app_gate.json`의 `storeUrl`을 실제 값으로 채운다. 설정을 못 받으면(오프라인 등)
-  항상 정상 실행한다 — 이 폴백 규칙은 절대 건드리지 않는다.
+- **강제 업데이트 게이트**(`core/remote_config/`): `Env.forceUpgradeConfigUrl`이
+  가리키는 JSON의 `forceUpgrade`를 true로 바꾸면 앱 재배포 없이 모든 기기에서
+  실행이 막히고 업데이트 안내만 뜬다(무료→광고 전환용). **원본은 이 저장소가
+  아니라 별도 공개 데이터 저장소 `bisan74-lab/golfwindy-data`의
+  `app_gate.json`이다** — 값을 바꾸려면 거기 파일을 갱신한다(`gov_data_mobile`의
+  `remote_config/app_gate.json`은 이관 전 원본 기록용일 뿐 앱이 더는 읽지
+  않는다). 배포 전 `storeUrl`을 실제 값으로 채운다. 설정을 못 받으면(오프라인
+  등) 항상 정상 실행한다 — 이 폴백 규칙은 절대 건드리지 않는다.

@@ -43,12 +43,20 @@ class Env {
   /// 무료 버전 배포 후 광고 버전으로 전환할 때, 이 URL이 가리키는 JSON 파일의
   /// `forceUpgrade`를 true로 바꾸면(앱 재배포 없이) 이미 설치된 모든 기기에서
   /// 앱 실행이 막히고 업데이트 안내만 뜬다 — `core/remote_config/`를 참고.
-  /// 배포 전 실제 호스팅 위치(자체 도메인, Gist 등)로 바꿔야 한다.
-  /// `--dart-define=FORCE_UPGRADE_CONFIG_URL=...` 로 재정의 가능.
+  ///
+  /// **골프윈디 전용 공개 데이터 저장소(`golfwindy-data`)를 가리킨다.**
+  /// `gov_data_mobile`(코드 저장소)이 비공개로 전환되면 raw 파일을 앱이
+  /// 익명으로 못 받으므로(인증 필요 → 404 → 게이트가 조용히 꺼짐, 앱 자체는
+  /// 항상 정상 실행되니 위험하진 않지만 게이트 기능을 못 쓰게 된다),
+  /// 이 설정만 별도 공개 저장소에 둔다(바다윈디가 `badawindy-data`를 쓰는
+  /// 것과 같은 방식). 원본은 `golfwindy-data`의 `app_gate.json`이고, 값을
+  /// 바꾸려면 그 저장소의 파일을 갱신한다(`gov_data_mobile`의
+  /// `remote_config/app_gate.json`은 그 저장소로 옮기기 전 원본 기록용으로만
+  /// 남겨 둔다). `--dart-define=FORCE_UPGRADE_CONFIG_URL=...` 로 재정의 가능.
   static const forceUpgradeConfigUrl = String.fromEnvironment(
     'FORCE_UPGRADE_CONFIG_URL',
     defaultValue:
-        'https://raw.githubusercontent.com/bisan74-lab/gov_data_mobile/'
-        'claude/data-go-kr-mobile-app-cvz6mp/remote_config/app_gate.json',
+        'https://raw.githubusercontent.com/bisan74-lab/golfwindy-data/'
+        'main/app_gate.json',
   );
 }
