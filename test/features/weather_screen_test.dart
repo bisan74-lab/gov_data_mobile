@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:golf_windy/core/storage/prefs.dart';
+import 'package:golf_windy/features/golf/presentation/widgets/golf_marker_layer.dart';
 import 'package:golf_windy/features/locations/data/sample_locations.dart';
 import 'package:golf_windy/features/locations/presentation/providers.dart';
 import 'package:golf_windy/features/weather/data/repositories/mock_wind_field_repository.dart';
@@ -13,6 +14,35 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // 파티클 애니메이션은 계속 반복되는 Ticker를 쓰므로 pumpAndSettle은 쓰지 않고
 // pump()로 몇 프레임만 진행해 예외 없이 그려지는지 확인한다.
+
+/// 상단 바의 상세 예보 아이콘. 지도 마커의 상세 버튼도 같은
+/// [Icons.insights]를 쓰므로(같은 동작이라 일부러 같은 아이콘) 아이콘만으로는
+/// 구분되지 않는다 — 상단 바만 [SafeArea]로 감싸여 있는 점을 이용해 좁힌다.
+Finder topBarDetailIcon() => find.descendant(
+  of: find.byType(SafeArea),
+  matching: find.byIcon(Icons.insights),
+);
+
+/// 바람지도 화면을 목 바람장으로 띄우고 첫 프레임들을 진행시킨다.
+/// (Ticker가 있어 pumpAndSettle은 쓰지 않는다.)
+Future<void> pumpWeatherScreen(WidgetTester tester) async {
+  SharedPreferences.setMockInitialValues({});
+  final prefs = await SharedPreferences.getInstance();
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        sharedPreferencesProvider.overrideWithValue(prefs),
+        windFieldRepositoryProvider.overrideWithValue(
+          MockWindFieldRepository(),
+        ),
+      ],
+      child: const MaterialApp(home: WeatherScreen()),
+    ),
+  );
+  await tester.pump(); // FutureProvider 완료
+  await tester.pump(const Duration(milliseconds: 16));
+  await tester.pump(const Duration(milliseconds: 16));
+}
 
 void main() {
   testWidgets('진입 시 선택 골프장의 바람 요약·이름 칩이 항상 뜨고, 탭하면 상세 예보 표가 열린다', (
@@ -43,13 +73,45 @@ void main() {
     // 바람 정보, 오른쪽 골프장명 칩)가 모두 떠 있다.
     expect(find.byType(CustomPaint), findsWidgets);
     expect(find.byType(Slider), findsOneWidget);
-    expect(find.byIcon(Icons.insights), findsOneWidget);
+    expect(topBarDetailIcon(), findsOneWidget);
     expect(find.text(sampleLocations.first.name), findsWidgets);
+    // 지도 마커의 상세 예보 버튼도 진입 즉시 함께 보인다.
+    expect(find.byKey(golfMarkerDetailButtonKey), findsOneWidget);
 
     // 상단 바 왼쪽(바람 정보)을 탭하면 표가 열려 하단 시간 스크러버
     // (map-mode 전용)가 사라진다.
-    await tester.tap(find.byIcon(Icons.insights));
+    await tester.tap(topBarDetailIcon());
     await tester.pump(const Duration(milliseconds: 16));
+    expect(find.byType(Slider), findsNothing);
+  });
+
+  // 마커의 두 진입 경로(이름 / 그 아래 상세 버튼)는 **각각 별도 테스트**로
+  // 둔다. 한 테스트에서 pumpWidget을 두 번 부르면 위젯 트리 구조가 같아
+  // State가 재사용되고(_forecastPoint가 남는다) 두 번째 검증이 더러운 상태에서
+  // 시작한다.
+  testWidgets('지도 마커의 상세 예보 버튼을 탭하면 상세 예보가 열린다', (tester) async {
+    await pumpWeatherScreen(tester);
+
+    expect(find.byType(Slider), findsOneWidget); // 지도 모드
+    await tester.tap(find.byKey(golfMarkerDetailButtonKey));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    // 표가 열리면 지도 모드 전용 시간 스크러버가 사라진다.
+    expect(find.byType(Slider), findsNothing);
+  });
+
+  testWidgets('지도 마커의 골프장 이름을 탭해도 상세 예보가 열린다(기존 동작 유지)', (tester) async {
+    await pumpWeatherScreen(tester);
+
+    expect(find.byType(Slider), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(GolfMarkerLayer),
+        matching: find.text(sampleLocations.first.name),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+
     expect(find.byType(Slider), findsNothing);
   });
 
@@ -85,7 +147,7 @@ void main() {
     // 상단 바(바람 정보)를 탭해 상세 예보 표를 연다 — 표 높이가 렌더 뒤
     // 측정되면(`_measureBottomBar`) 그 높이를 뺀 나머지 지도 영역 가운데로
     // 재중심이 예약 실행된다.
-    await tester.tap(find.byIcon(Icons.insights));
+    await tester.tap(topBarDetailIcon());
     await tester.pump(const Duration(milliseconds: 16));
 
     final afterTy = translationY();
