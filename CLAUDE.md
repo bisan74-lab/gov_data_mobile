@@ -75,10 +75,28 @@ Windy 지도를 이식·개조한 것이다. **골프윈디 커스터마이징�
 맞춰졌다: 바람장 쌍3차(bicubic) 보간 + 적응형(비균일) 공간·시간 격자,
 히트맵 난류 텍스처·아이솔레이트 병렬 렌더링, 스크럽 중 고해상도 핵심영역
 빌드를 미루는 성능 최적화(지도 날짜이동 체감 속도 개선), `visibleBounds`
-기반 도시 라벨 뷰포트 필터, 골프윈디 자체 `wind-data.yml` 서버 파이프라인
-신설(바다윈디는 비공개 전환 후 별도 공개 데이터 저장소를 쓰지만, 골프윈디
-저장소는 공개라 같은 저장소 롤링 릴리스로 충분). `flutter analyze` 0 ·
-`flutter test` 통과 상태 유지.
+기반 도시 라벨 뷰포트 필터. **바람장은 골프윈디가 직접 수집하지 않고
+바다윈디의 공개 데이터 저장소(`bisan74-lab/badawindy-data`)를 그대로
+쓴다** — 두 앱의 지도 bbox·격자 포맷이 완전히 같아(재동기화로 맞춤),
+같은 걸 Open-Meteo에 또 요청하면 순수 낭비이자 호출 한도 이중 소모라
+골프윈디만의 fetch_wind.py/크론은 두지 않기로 했다(2026-08 재점검).
+`flutter analyze` 0 · `flutter test` 통과 상태 유지.
+
+**저장소 비공개 전환 진행 중**: `gov_data_mobile`을 최종적으로 비공개로
+돌리기로 했다(현재 공개). 바다윈디도 같은 이유로 코드 저장소는 비공개,
+공개 자산(바람장·게이트 설정)만 별도 공개 데이터 저장소에 두는 방식으로
+전환한 전례가 있어 같은 패턴을 따른다. **막힌 부분**: 이 세션의 GitHub
+연동은 `gov_data_mobile`·`BadaMobile` 두 저장소로만 스코프돼 있어 새
+공개 데이터 저장소(`golfwindy-data` 등, force-upgrade 게이트 `app_gate.json`
+전용 — 바다윈디 것은 버전 체계가 달라 공유 불가) 생성 권한이 없다
+(`create_repository` 403). **사용자가 저장소를 만들어 세션에 추가해
+주면** `Env.forceUpgradeConfigUrl` 기본값을 그리로 옮기고, 그 다음
+`gov_data_mobile`을 비공개로 전환할 수 있다(비공개 전환 자체도 저장소
+설정 변경이라 계정 소유자만 가능 — Danger Zone, 이 세션이 대신 못 함).
+전환 전 참고: **Private 저장소는 GitHub Actions 무료 사용량이 계정
+플랜별로 제한**된다(Public은 무제한) — 릴리스 빌드·테스트가 잦다면
+확인 필요. 전환 후 `test-build-N` APK 다운로드 링크도 로그인(권한 있는
+계정) 없이는 못 받게 된다.
 
 **미완/유의**: 실기기 APK는 GitHub Actions `release-apk.yml`로만 가능한데 워크플로가
 기본 브랜치(main)에 있어야 실행되며 현재 main이 비어 있어 트리거 불가(이 개발 환경은
@@ -121,16 +139,21 @@ dart format lib test     # 커밋 전 포맷
 - **`app/app.dart`의 `IndexedStack`에 새 탭을 추가하면 `TickerMode(enabled:
   현재탭)`로 감싸야 한다** — 안 그러면 비활성 탭의 Ticker가 계속 돌아 다른 탭
   위젯 테스트가 멈춘다.
-- **지도 바람장은 서버 파일 우선**(`features/weather/.../github_wind_field_repository.dart`):
-  GitHub Actions 크론(`.github/workflows/wind-data.yml` → `tool/fetch_wind.py`)이
+- **지도 바람장은 서버 파일 우선, 단 골프윈디는 자체 수집을 두지 않는다**
+  (`features/weather/.../github_wind_field_repository.dart`): `Env.windDataUrl`
+  기본값이 **바다윈디(BadaMobile)의 공개 데이터 저장소**
+  (`bisan74-lab/badawindy-data`)의 `wind-data` 롤링 릴리스 `wind_field.json.gz`를
+  가리킨다. 바다윈디의 GitHub Actions 크론(그 저장소의 `tool/fetch_wind.py`)이
   Open-Meteo에서 격자(적응형 64×66≈4224점, 핵심 해역은 더 촘촘)를 배치로 받아
-  이 저장소(공개) 롤링 릴리스 `wind-data`의 `wind_field.json.gz`로 올리고,
-  앱은 `Env.windDataUrl`(기본값이 이 릴리스 URL) 파일 하나만 내려받는다. 그래서
-  사용자 기기는 Open-Meteo를 직접 다지점 호출하지 않아 분당 한도와 무관하고,
-  파일을 못 받으면(워크플로 미실행·네트워크 실패) 앱이 Open-Meteo 직접 호출→
-  캐시→합성 순으로 자동 폴백한다. 파일 포맷을 바꾸면 `fetch_wind.py`와
-  `parseWindFieldFile`(및 그 테스트)을 함께 맞춘다. **워크플로는 처음 한 번
-  수동 실행(workflow_dispatch)해야 릴리스가 생긴다** — 그전까진 항상 폴백 경로.
+  주기적으로 올려 둔다. 골프윈디의 지도 bbox·격자 포맷이 바다윈디와 완전히
+  같아서(2026-08 재동기화) 같은 파일을 그대로 써도 정확히 맞고, 골프윈디가
+  똑같은 데이터를 Open-Meteo에 또 요청하면 순수 낭비이자 호출 한도 이중
+  소모라 **골프윈디만의 fetch_wind.py·wind-data.yml 크론은 의도적으로 두지
+  않는다**(2026-08 재점검 결론). 파일을 못 받으면(네트워크 실패 등) 앱이
+  Open-Meteo 직접 호출→캐시→합성 순으로 자동 폴백한다. 파일 포맷이 바뀌면
+  바다윈디 쪽 `fetch_wind.py`에 맞춰 `parseWindFieldFile`(및 그 테스트)을
+  함께 갱신해야 한다 — 두 저장소가 분리돼 있으므로 바다윈디의 포맷 변경을
+  놓치지 않도록 주의(재동기화 가이드 참고).
 - 바람 지도(`features/weather/presentation/`)의 `mapViewBounds`
   (`widgets/map_projection.dart`)와 `OpenMeteoWindFieldRepository`의 격자 범위는
   **같은 bbox**(위 18~57, 경 108~148)를 써야 히트맵이 뷰를 채운다. 범위를 바꾸면

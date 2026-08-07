@@ -23,16 +23,18 @@ class Env {
 
   /// 지도용 바람장 격자 데이터(서버가 미리 뽑아 둔 정적 파일) URL.
   ///
-  /// GitHub Actions 크론(`.github/workflows/wind-data.yml` → `tool/fetch_wind.py`)이
-  /// 이 저장소의 롤링 릴리스(`wind-data`)에 `wind_field.json.gz`를 올리고,
-  /// 앱은 이 URL 하나만 내려받는다(사용자 기기가 Open-Meteo를 직접 다지점
-  /// 호출하지 않아 분당 호출 한도와 무관해진다). 파일을 못 받으면(아직
-  /// 워크플로가 한 번도 안 돌았거나 네트워크 실패) 앱이 Open-Meteo 직접
-  /// 호출로 자동 폴백한다. `--dart-define=WIND_DATA_URL=...` 로 재정의 가능.
+  /// **바다윈디(BadaMobile)의 공개 데이터 저장소(`badawindy-data`)를 그대로
+  /// 쓴다** — 골프윈디의 지도 bbox(위 18~57, 경 108~148)와 격자 포맷(fmt 3,
+  /// 64×66 적응형)이 바다윈디와 완전히 같아서(2026-08 재동기화로 맞춤),
+  /// 같은 파일을 그대로 재사용해도 정확히 맞는다. 골프윈디가 별도로 같은
+  /// 격자를 Open-Meteo에 다시 요청하면 완전히 같은 데이터를 중복으로
+  /// 받아오는 셈이라(호출 낭비·한도 이중 소모), 자체 수집 파이프라인을 두지
+  /// 않는다. 파일을 못 받으면(네트워크 실패 등) 앱이 Open-Meteo 직접 호출로
+  /// 자동 폴백한다. `--dart-define=WIND_DATA_URL=...` 로 재정의 가능.
   static const windDataUrl = String.fromEnvironment(
     'WIND_DATA_URL',
     defaultValue:
-        'https://github.com/bisan74-lab/gov_data_mobile/releases/'
+        'https://github.com/bisan74-lab/badawindy-data/releases/'
         'download/wind-data/wind_field.json.gz',
   );
 
