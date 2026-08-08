@@ -16,11 +16,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 // pump()로 몇 프레임만 진행해 예외 없이 그려지는지 확인한다.
 
 /// 상단 바의 상세 예보 아이콘. 지도 마커의 상세 버튼도 같은
-/// [Icons.insights]를 쓰므로(같은 동작이라 일부러 같은 아이콘) 아이콘만으로는
-/// 구분되지 않는다 — 상단 바만 [SafeArea]로 감싸여 있는 점을 이용해 좁힌다.
+/// [golfDetailForecastIcon]을 쓰므로(같은 동작이라 일부러 같은 아이콘)
+/// 아이콘만으로는 구분되지 않는다 — 상단 바만 [SafeArea]로 감싸여 있는 점을
+/// 이용해 좁힌다.
 Finder topBarDetailIcon() => find.descendant(
   of: find.byType(SafeArea),
-  matching: find.byIcon(Icons.insights),
+  matching: find.byIcon(golfDetailForecastIcon),
 );
 
 /// 바람지도 화면을 목 바람장으로 띄우고 첫 프레임들을 진행시킨다.
@@ -93,11 +94,60 @@ void main() {
     await pumpWeatherScreen(tester);
 
     expect(find.byType(Slider), findsOneWidget); // 지도 모드
+    // 아이콘만으로는 알기 어렵다는 제보를 받아 글자를 함께 넣었다 —
+    // 버튼 안에 "상세 예보" 라벨이 실제로 보여야 한다.
+    expect(
+      find.descendant(
+        of: find.byKey(golfMarkerDetailButtonKey),
+        matching: find.text('상세 예보'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(golfMarkerDetailButtonKey));
     await tester.pump(const Duration(milliseconds: 16));
 
     // 표가 열리면 지도 모드 전용 시간 스크러버가 사라진다.
     expect(find.byType(Slider), findsNothing);
+  });
+
+  testWidgets('큰 글자에서도 상세 예보 버튼이 골프장 이름 위로 파고들지 않는다', (tester) async {
+    // 버튼을 이름 행 아래로 내리는 거리를 **상수로 박으면** 배율이 오를 때
+    // 이름 행만 길어져 버튼이 이름을 덮는다(배율 2.0에서 실제로 겹쳤다).
+    // 실제 글자 높이를 재서 내리도록 고친 것의 회귀 테스트.
+    for (final scale in [1.0, 1.5, 2.0]) {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      await tester.pumpWidget(
+        MediaQuery(
+          data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+          child: ProviderScope(
+            overrides: [
+              sharedPreferencesProvider.overrideWithValue(prefs),
+              windFieldRepositoryProvider.overrideWithValue(
+                MockWindFieldRepository(),
+              ),
+            ],
+            child: const MaterialApp(home: WeatherScreen()),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 16));
+
+      final button = tester.getRect(find.byKey(golfMarkerDetailButtonKey));
+      final name = tester.getRect(
+        find.descendant(
+          of: find.byType(GolfMarkerLayer),
+          matching: find.text(sampleLocations.first.name),
+        ),
+      );
+      expect(
+        button.top,
+        greaterThanOrEqualTo(name.bottom - 0.5),
+        reason: '배율 ${scale}x에서 상세 예보 버튼이 골프장 이름과 겹친다',
+      );
+    }
   });
 
   testWidgets('지도 마커의 골프장 이름을 탭해도 상세 예보가 열린다(기존 동작 유지)', (tester) async {

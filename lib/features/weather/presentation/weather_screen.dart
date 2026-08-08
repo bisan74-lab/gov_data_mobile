@@ -976,8 +976,10 @@ class _TopWindBar extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 6),
+                    // 지도 마커의 상세 예보 버튼과 **같은 아이콘**을 쓴다
+                    // (같은 동작이므로) — [golfDetailForecastIcon].
                     const Icon(
-                      Icons.insights,
+                      golfDetailForecastIcon,
                       size: 16,
                       color: Colors.white70,
                       shadows: shadow,
