@@ -14,6 +14,7 @@ import 'package:golf_windy/app/app.dart';
 import 'package:golf_windy/core/remote_config/app_gate_provider.dart';
 import 'package:golf_windy/core/remote_config/app_gate_repository.dart';
 import 'package:golf_windy/core/storage/prefs.dart';
+import 'package:golf_windy/features/compass/presentation/wind_compass_screen.dart';
 import 'package:golf_windy/features/home/presentation/home_screen.dart';
 import 'package:golf_windy/features/kma_weather/data/repositories/mock_land_weather_repository.dart';
 import 'package:golf_windy/features/kma_weather/presentation/kma_weather_screen.dart';
@@ -148,5 +149,13 @@ void main() {
     failures.clear();
     await check(tester, '앱 셸', AppShell.new);
     expect(failures, isEmpty, reason: '\n${failures.join('\n')}');
+  });
+
+  testWidgets('바람나침판 화면이 큰 글자에서도 넘치지 않는다', (tester) async {
+    failures.clear();
+    await check(tester, '바람나침판', WindCompassScreen.new);
+    expect(failures, isEmpty, reason: '\n${failures.join('\n')}');
+    // 위치 조회 시간 제한·센서 대기 타이머를 흘려 보낸다(남으면 실패로 잡힌다).
+    await tester.pump(const Duration(seconds: 16));
   });
 }

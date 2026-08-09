@@ -13,8 +13,12 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_riverpod: ^2.6.1
   geolocator: ^13.0.1
+  google_mobile_ads: ^6.0.0
   http: ^1.2.2
   intl: ^0.20.2
+  # 바람나침판: 자력계·가속도계 원값을 받아 방위각을 직접 계산한다
+  # (flutter_compass는 관리가 멈춘 지 오래라 쓰지 않는다).
+  sensors_plus: ^6.1.1
   shared_preferences: ^2.3.2
   url_launcher: ^6.3.1
 
@@ -26,6 +30,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # 광고가 없을 때 배너 자리를 채우는 앱 소개 박스가 쓴다.
+    - assets/icon/app_icon.png
 
 # 런처 아이콘 생성: dart run flutter_launcher_icons
 flutter_launcher_icons:

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/ad_placeholder.dart';
 import '../../../core/widgets/compact_text_scale.dart';
 import '../../locations/data/models/sea_location.dart';
 import '../../locations/presentation/providers.dart';
@@ -36,35 +37,41 @@ class _KmaWeatherScreenState extends ConsumerState<KmaWeatherScreen> {
         title: const Text('골프장 날씨'),
         actions: const [RegionSelectorAction()],
       ),
-      body: forecastAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('날씨 예보를 불러오지 못했습니다: $e')),
-        data: (f) => ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          children: [
-            _CurrentHeader(location: location, now: f.now),
-            const SizedBox(height: 12),
-            _TodayTomorrow(daily: f.daily),
-            if (f.nowcast.any((n) => n.precipMm > 0)) ...[
+      // 맨 아래 광고 띠를 깔고, 본문은 그만큼 줄어든 높이를 쓴다. 로딩·오류
+      // 상태에도 배너 자리가 그대로 있어야 화면이 흔들리지 않는다.
+      body: AdBannerBar(
+        slot: AdSlot.weather,
+        child: forecastAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (e, _) => Center(child: Text('날씨 예보를 불러오지 못했습니다: $e')),
+          data: (f) => ListView(
+            // 아래 여백은 광고 띠가 대신하므로 24 → 8로 줄인다.
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            children: [
+              _CurrentHeader(location: location, now: f.now),
               const SizedBox(height: 12),
-              _NowcastCard(steps: f.nowcast),
+              _TodayTomorrow(daily: f.daily),
+              if (f.nowcast.any((n) => n.precipMm > 0)) ...[
+                const SizedBox(height: 12),
+                _NowcastCard(steps: f.nowcast),
+              ],
+              const SizedBox(height: 16),
+              Text('24시간 예보', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              _HourlyStrip(hours: f.next24h),
+              const SizedBox(height: 16),
+              _DailyHeader(
+                show15: _show15,
+                onChanged: (v) => setState(() => _show15 = v),
+              ),
+              const SizedBox(height: 4),
+              for (final d in f.daily.take(_show15 ? 15 : 7)) _DailyRow(day: d),
+              const SizedBox(height: 16),
+              Text('상세 정보', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              _DetailGrid(forecast: f),
             ],
-            const SizedBox(height: 16),
-            Text('24시간 예보', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            _HourlyStrip(hours: f.next24h),
-            const SizedBox(height: 16),
-            _DailyHeader(
-              show15: _show15,
-              onChanged: (v) => setState(() => _show15 = v),
-            ),
-            const SizedBox(height: 4),
-            for (final d in f.daily.take(_show15 ? 15 : 7)) _DailyRow(day: d),
-            const SizedBox(height: 16),
-            Text('상세 정보', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            _DetailGrid(forecast: f),
-          ],
+          ),
         ),
       ),
     );

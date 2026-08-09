@@ -30,6 +30,12 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- AdMob 앱 ID. 값은 build.gradle.kts의 manifestPlaceholders가 빌드
+             때 채우고, 기본값은 구글 공식 **테스트** 앱 ID다. 실제 ID는
+             저장소에 커밋하지 않고 환경변수 ADMOB_APP_ID로 넣는다. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${admobAppId}" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/ad_placeholder.dart';
 import '../../../core/widgets/compact_text_scale.dart';
+import '../../compass/presentation/widgets/wind_compass_button.dart';
 import '../../golf/data/models/golf_course.dart';
 import '../../golf/logic/golf_advice.dart';
 import '../../golf/presentation/providers.dart';
@@ -37,35 +39,40 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         title: const Text('골프윈디'),
         actions: const [RegionSelectorAction()],
       ),
-      body: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          _Header(
-            title: location.name,
-            subtitle: course == null
-                ? location.region
-                : '${course.region} · ${course.type} · ${course.holes}홀',
-            date: _date,
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: HomeDateStrip(
+      // 맨 아래 광고 띠를 깔고, 본문은 그만큼 줄어든 높이를 쓴다.
+      body: AdBannerBar(
+        slot: AdSlot.home,
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            _Header(
+              title: location.name,
+              subtitle: course == null
+                  ? location.region
+                  : '${course.region} · ${course.type} · ${course.holes}홀',
               date: _date,
-              minDate: today,
-              maxDate: today.add(const Duration(days: 14)),
-              onChanged: (d) => setState(() => _date = d),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-            child: forecastAsync.when(
-              loading: () => const _LoadingCard(),
-              error: (e, _) => _ErrorCard(message: '$e'),
-              data: (f) =>
-                  _DayContent(course: course, forecast: f, date: _date),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: HomeDateStrip(
+                date: _date,
+                minDate: today,
+                maxDate: today.add(const Duration(days: 14)),
+                onChanged: (d) => setState(() => _date = d),
+              ),
             ),
-          ),
-        ],
+            Padding(
+              // 아래 여백은 광고 띠가 대신하므로 24 → 8로 줄인다.
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: forecastAsync.when(
+                loading: () => const _LoadingCard(),
+                error: (e, _) => _ErrorCard(message: '$e'),
+                data: (f) =>
+                    _DayContent(course: course, forecast: f, date: _date),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -121,6 +128,12 @@ class _DayContent extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // 라운딩 지수 카드 **위 오른쪽 빈 공간**에 놓는 바람나침판 버튼.
+        const Align(
+          alignment: Alignment.centerRight,
+          child: WindCompassButton(),
+        ),
+        const SizedBox(height: 6),
         _RoundIndexCard(index: index, rep: rep),
         const SizedBox(height: 12),
         _OutfitCard(text: outfit, tempC: rep.tempC),

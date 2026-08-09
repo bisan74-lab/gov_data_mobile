@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme.dart';
+import '../../../core/widgets/ad_placeholder.dart';
 import '../app_info.dart';
 import 'policy_screen.dart';
 import 'providers.dart';
@@ -17,12 +18,16 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('설정')),
-      body: ListView(
-        children: const [
-          _TemplateSection(),
-          Divider(height: 1),
-          _InfoSection(),
-        ],
+      // 맨 아래 광고 띠를 깔고, 목록은 그만큼 줄어든 높이를 쓴다.
+      body: AdBannerBar(
+        slot: AdSlot.settings,
+        child: ListView(
+          children: const [
+            _TemplateSection(),
+            Divider(height: 1),
+            _InfoSection(),
+          ],
+        ),
       ),
     );
   }

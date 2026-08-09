@@ -28,6 +28,17 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // AndroidManifest의 AdMob 앱 ID. 기본값은 구글 공식 **테스트** 앱
+        // ID이므로, 아무 설정 없이 빌드해도 실 수익 계정에 무효 트래픽이
+        // 잡히지 않는다. 스토어 배포 빌드는 반드시 실제 값을 넘겨야 한다.
+        // `flutter build`는 임의의 Gradle -P 인자를 넘겨주지 않으므로
+        // 환경변수를 먼저 본다:
+        //   ADMOB_APP_ID=ca-app-pub-XXXX~YYYY flutter build appbundle
+        manifestPlaceholders["admobAppId"] =
+            System.getenv("ADMOB_APP_ID")
+                ?: (project.findProperty("admob_app_id") as String?)
+                ?: "ca-app-pub-3940256099942544~3347511713"
     }
 
     buildTypes {
