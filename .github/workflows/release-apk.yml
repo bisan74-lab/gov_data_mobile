@@ -7,10 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       ads:
-        description: '광고 (test=구글 테스트 광고 / real=실제 AdMob 광고)'
+        description: >-
+          광고 (test=구글 테스트 광고 / none=광고 끔, 스토어 스크린샷용 /
+          real=실제 AdMob 광고)
         type: choice
         default: test
-        options: [test, real]
+        options: [test, none, real]
         required: true
 
 permissions:
@@ -53,6 +55,12 @@ jobs:
       # 정지될 수 있다. 스토어 제출 직전 확인이 필요할 때만 실행 시
       # `ads=real`을 고른다.
       #
+      # `none`은 광고를 아예 끈다. 스토어 스크린샷을 찍을 때 쓴다 —
+      # 테스트 광고에는 "Test Ad" 딱지가 붙어 있어 그대로 찍으면 등록정보가
+      # 지저분해지고, 그렇다고 실제 광고를 띄워 놓고 찍으면 내 노출이
+      # 무효 트래픽으로 잡힌다. 광고 자리는 같은 높이의 앱 소개 박스로
+      # 대체되므로 레이아웃은 실제와 같다.
+      #
       # `real`인데 Secret이 비어 있으면 **빌드를 멈춘다** — 실제 광고를
       # 기대하고 돌렸는데 조용히 테스트 광고가 박힌 APK가 나오면 그걸
       # 그대로 스토어에 올리게 된다.
@@ -62,18 +70,25 @@ jobs:
           ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
           ADMOB_BANNER_AD_UNIT_ID: ${{ secrets.ADMOB_BANNER_AD_UNIT_ID }}
         run: |
-          if [ "${{ inputs.ads }}" = "real" ]; then
-            if [ -z "$ADMOB_APP_ID" ] || [ -z "$ADMOB_BANNER_AD_UNIT_ID" ]; then
-              echo "::error::ads=real인데 ADMOB_APP_ID 또는 " \
-                "ADMOB_BANNER_AD_UNIT_ID Secret이 비어 있습니다."
-              exit 1
-            fi
-            echo "real=true" >> "$GITHUB_OUTPUT"
-            echo "label=실제 AdMob 광고" >> "$GITHUB_OUTPUT"
-          else
-            echo "real=false" >> "$GITHUB_OUTPUT"
-            echo "label=구글 테스트 광고" >> "$GITHUB_OUTPUT"
-          fi
+          case "${{ inputs.ads }}" in
+            real)
+              if [ -z "$ADMOB_APP_ID" ] || [ -z "$ADMOB_BANNER_AD_UNIT_ID" ]; then
+                echo "::error::ads=real인데 ADMOB_APP_ID 또는 " \
+                  "ADMOB_BANNER_AD_UNIT_ID Secret이 비어 있습니다."
+                exit 1
+              fi
+              echo "mode=real" >> "$GITHUB_OUTPUT"
+              echo "label=실제 AdMob 광고" >> "$GITHUB_OUTPUT"
+              ;;
+            none)
+              echo "mode=none" >> "$GITHUB_OUTPUT"
+              echo "label=광고 없음(스크린샷용)" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "mode=test" >> "$GITHUB_OUTPUT"
+              echo "label=구글 테스트 광고" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
       # 실 API 키·광고 ID는 저장소 Secret에서만 주입한다 — 코드·로그에
       # 노출되지 않는다(GitHub이 로그에서 Secret 값을 가린다).
@@ -88,7 +103,10 @@ jobs:
       - name: 릴리스 APK 빌드
         run: |
           ad_defines=()
-          if [ "${{ steps.ads.outputs.real }}" = "true" ]; then
+          if [ "${{ steps.ads.outputs.mode }}" = "none" ]; then
+            # 빈 값을 넘기면 Env가 "광고 없음"으로 보고 SDK를 아예 안 만진다.
+            ad_defines=("--dart-define=ADMOB_BANNER_AD_UNIT_ID=")
+          elif [ "${{ steps.ads.outputs.mode }}" = "real" ]; then
             # Gradle이 AndroidManifest에 채울 앱 ID(경로가 다르다).
             export ADMOB_APP_ID='${{ secrets.ADMOB_APP_ID }}'
             ad_defines=(
@@ -146,8 +164,10 @@ jobs:
             기상청 단기예보 실데이터는 저장소 Secret이 있을 때만 들어갑니다
             (없으면 합성 데이터로 동작).
 
-            ${{ steps.ads.outputs.real == 'true'
+            ${{ steps.ads.outputs.mode == 'real'
               && '⚠️ **실제 광고가 들어 있습니다.** 본인 기기에서 광고를 누르지 마세요 — 무효 트래픽으로 AdMob 계정이 정지될 수 있습니다.'
-              || '광고는 구글 공식 테스트 광고라 마음껏 눌러 봐도 됩니다.' }}
+              || (steps.ads.outputs.mode == 'none'
+                  && '광고를 끈 빌드입니다. 배너 자리는 앱 소개 박스로 대체되며, 스토어 스크린샷용입니다.'
+                  || '광고는 구글 공식 테스트 광고라 마음껏 눌러 봐도 됩니다.') }}
           files: build/app/outputs/flutter-apk/${{ steps.vars.outputs.apk_name }}
           prerelease: true
