@@ -79,6 +79,28 @@ double magneticDeclinationDeg(double lat, double lon) {
   return d.clamp(-11.0, -5.0);
 }
 
+/// 지자기 벡터의 크기(µT).
+double fieldStrengthMicroTesla(Vec3 m) =>
+    math.sqrt(m.x * m.x + m.y * m.y + m.z * m.z);
+
+/// 지구 자기장의 정상 세기 범위(µT). 지표면에서 대략 25~65µT이고 한반도는
+/// 50µT 언저리다.
+const double minEarthFieldMicroTesla = 25;
+const double maxEarthFieldMicroTesla = 65;
+
+/// 지금 읽히는 자기장이 **지구 자기장만인지** 판정한다.
+///
+/// 자동차·철제 책상·자석 케이스·스피커가 가까이 있으면 그 자기장이 더해져
+/// 크기가 정상 범위를 벗어난다. 이때 방위각은 계산은 되지만 **엉뚱한 값**이라,
+/// 화면에서 "지금 값은 못 믿는다"고 알려 줘야 한다.
+///
+/// 방향만 보면 알 수 없고 **크기**를 봐야 잡힌다 — 왜곡된 자기장도 방향은
+/// 멀쩡해 보인다.
+bool isFieldPlausible(Vec3 m) {
+  final s = fieldStrengthMicroTesla(m);
+  return s >= minEarthFieldMicroTesla && s <= maxEarthFieldMicroTesla;
+}
+
 /// 각도(도)의 저역통과 필터. 자력계는 값이 튀어서 그대로 그리면 바늘이
 /// 떨린다.
 ///

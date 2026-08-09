@@ -89,6 +89,39 @@ void main() {
     });
   });
 
+  group('isFieldPlausible — 주변 금속·자석 감지', () {
+    test('지구 자기장 세기(약 50µT)면 정상', () {
+      // 한반도 기준: 수평 30µT + 연직 40µT → 크기 50µT.
+      expect(
+        fieldStrengthMicroTesla((x: 0.0, y: _h, z: _v)),
+        closeTo(50, 0.01),
+      );
+      expect(isFieldPlausible((x: 0.0, y: _h, z: _v)), isTrue);
+    });
+
+    test('자석이 가까우면(세기가 과도) 왜곡으로 잡는다', () {
+      // 자석·스피커 근처에서는 수백 µT까지 오른다.
+      expect(isFieldPlausible((x: 200.0, y: 30.0, z: -40.0)), isFalse);
+    });
+
+    test('세기가 너무 약해도 왜곡으로 잡는다', () {
+      // 차폐된 곳이나 센서 이상 — 방향은 멀쩡해 보여도 값을 믿을 수 없다.
+      expect(isFieldPlausible((x: 0.0, y: 6.0, z: -8.0)), isFalse);
+    });
+
+    test('방향만 봐서는 못 잡는다 — 크기를 봐야 한다', () {
+      // 아래 둘은 **방위각이 완전히 같지만** 하나는 왜곡된 자기장이다.
+      const normal = (x: 0.0, y: 30.0, z: -40.0);
+      const distorted = (x: 0.0, y: 300.0, z: -400.0);
+      expect(
+        magneticAzimuthDeg(flat, normal),
+        closeTo(magneticAzimuthDeg(flat, distorted)!, 0.01),
+      );
+      expect(isFieldPlausible(normal), isTrue);
+      expect(isFieldPlausible(distorted), isFalse);
+    });
+  });
+
   group('smoothAngleDeg', () {
     test('첫 값은 그대로 통과', () {
       expect(smoothAngleDeg(null, 137, 0.2), closeTo(137, 0.01));

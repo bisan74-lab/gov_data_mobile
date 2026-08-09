@@ -1,5 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:golf_windy/features/compass/presentation/widgets/compass_rose.dart';
 import 'package:golf_windy/features/compass/presentation/widgets/wind_compass_button.dart';
 import 'package:golf_windy/features/compass/presentation/wind_compass_screen.dart';
 import 'package:golf_windy/features/home/presentation/home_screen.dart';
@@ -7,38 +10,42 @@ import 'package:golf_windy/features/home/presentation/home_screen.dart';
 import '../widget_test.dart';
 
 void main() {
-  group('compassPointAt — 기기를 어느 쪽으로 돌려도 방위가 실제 방위를 가리킨다', () {
-    const center = Offset(100, 100);
-    const r = 50.0;
+  group('screenRotationRad — 기기를 어느 쪽으로 돌려도 방위가 실제 방위를 가리킨다', () {
+    /// 회전각을 실제 화면 좌표로 옮겨 본다(`Transform.rotate`와 같은 계산:
+    /// 화면 위쪽이 0도이고 시계 방향으로 증가).
+    Offset pointAt(double bearing, double heading, {double r = 50}) {
+      final a = screenRotationRad(bearing, heading);
+      return Offset(100 + r * math.sin(a), 100 - r * math.cos(a));
+    }
 
     test('북을 보고 있으면 북이 화면 위, 동이 오른쪽', () {
-      final north = compassPointAt(center, 0, 0, r);
+      final north = pointAt(0, 0);
       expect(north.dx, closeTo(100, 0.01));
       expect(north.dy, closeTo(50, 0.01)); // 화면 위쪽(y가 작다)
 
-      final east = compassPointAt(center, 90, 0, r);
+      final east = pointAt(90, 0);
       expect(east.dx, closeTo(150, 0.01));
       expect(east.dy, closeTo(100, 0.01));
     });
 
     test('기기를 동쪽으로 돌리면 북 표시가 화면 왼쪽으로 간다', () {
       // 기기가 동(90도)을 보면, 북은 내 왼쪽에 있다.
-      final north = compassPointAt(center, 0, 90, r);
+      final north = pointAt(0, 90);
       expect(north.dx, closeTo(50, 0.01)); // 왼쪽
       expect(north.dy, closeTo(100, 0.01));
     });
 
     test('기기를 남쪽으로 돌리면 북 표시가 화면 아래로 간다', () {
-      final north = compassPointAt(center, 0, 180, r);
+      final north = pointAt(0, 180);
       expect(north.dx, closeTo(100, 0.01));
       expect(north.dy, closeTo(150, 0.01)); // 아래
     });
 
     test('네 방위는 어떤 각도에서도 서로 90도씩 벌어져 있다', () {
+      const center = Offset(100, 100);
       for (final heading in [0.0, 37.0, 123.5, 271.0, 359.9]) {
         final pts = [
-          for (final b in [0.0, 90.0, 180.0, 270.0])
-            compassPointAt(center, b, heading, r),
+          for (final b in [0.0, 90.0, 180.0, 270.0]) pointAt(b, heading),
         ];
         for (var i = 0; i < 4; i++) {
           final a = pts[i] - center;
@@ -55,11 +62,65 @@ void main() {
 
     test('방위와 기기 방향이 같으면 화면 맨 위(기기가 향한 쪽)에 온다', () {
       for (final h in [0.0, 45.0, 200.0, 330.0]) {
-        final p = compassPointAt(center, h, h, r);
+        final p = pointAt(h, h);
         expect(p.dx, closeTo(100, 0.01));
         expect(p.dy, closeTo(50, 0.01));
       }
     });
+
+    test('원판 회전각은 "북이 놓이는 자리"와 같다', () {
+      // 원판을 통째로 돌릴 때 쓰는 값이 방위 계산과 어긋나면, 화살표만
+      // 맞고 N 글자는 딴 데를 가리킨다.
+      for (final h in [0.0, 73.0, 190.0, 315.0]) {
+        expect(screenRotationRad(0, h), closeTo(-h * math.pi / 180, 1e-9));
+      }
+    });
+  });
+
+  testWidgets('나침반 원판과 바람 화살표가 같은 기준으로 함께 돈다', (tester) async {
+    // 원판(CompassRose)과 화살표(WindArrowPainter)는 각각 Transform.rotate로
+    // 도는데, 두 각도가 같은 heading에서 나와야 화살표가 실제 풍향을
+    // 가리킨다. 위젯을 직접 띄워 두 그림이 다 올라오는지 확인한다.
+    const heading = 40.0;
+    const windFrom = 130.0; // 남동풍
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox.square(
+            dimension: 300,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Transform.rotate(
+                  angle: screenRotationRad(0, heading),
+                  child: const CompassRose(),
+                ),
+                Transform.rotate(
+                  angle: screenRotationRad(windFrom, heading),
+                  child: CustomPaint(
+                    painter: WindArrowPainter(
+                      color: const Color(0xFF29ABE2),
+                      outline: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(CompassRose), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // 풍향(130도)에서 기기 방향(40도)을 뺀 90도 — 화살표는 화면 오른쪽에서
+    // 가운데를 향해야 한다.
+    expect(
+      screenRotationRad(windFrom, heading),
+      closeTo(90 * math.pi / 180, 1e-9),
+    );
   });
 
   testWidgets('홈 라운딩 지수 카드 위 오른쪽에 바람나침판 버튼이 있다', (tester) async {

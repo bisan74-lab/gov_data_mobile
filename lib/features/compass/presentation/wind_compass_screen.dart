@@ -12,31 +12,18 @@ import '../../kma_weather/data/models/land_weather.dart';
 import '../../kma_weather/presentation/providers.dart';
 import '../../locations/data/models/sea_location.dart';
 import '../../locations/presentation/providers.dart';
+import 'widgets/compass_rose.dart';
 
 /// 화면 하단 설명 문구(사용자 지정). 테스트가 이 문구를 그대로 찾는다.
 const windCompassCaption = '실시간 현재위치에 따른 바람방향 나침판';
 
 /// 진북 기준 방위 [bearingDeg]가, 기기가 [headingDeg] 쪽을 향한 화면에서
-/// 놓이는 자리 — [center]에서 [radius]만큼 떨어진 점. 화면 위쪽이 0도이고
-/// 시계 방향으로 증가한다.
+/// 놓이려면 얼마나 돌려야 하는지(라디안). `Transform.rotate`에 그대로 넣는다.
 ///
-/// **나침반의 핵심**이라 따로 빼서 테스트한다. 원판을 통째로
-/// `Transform.rotate` 하지 않고 좌표를 직접 잡는 이유는, 눈금·화살표는
-/// 원판과 함께 돌리되 **동서남북 글자만 똑바로 세워야** 하기 때문이다
-/// (함께 돌리면 남쪽을 볼 때 글자가 뒤집혀 못 읽는다).
-Offset compassPointAt(
-  Offset center,
-  double bearingDeg,
-  double headingDeg,
-  double radius,
-) {
-  // 기기가 headingDeg 쪽을 보고 있으므로 그만큼 빼면 화면 각이 된다.
-  final a = (bearingDeg - headingDeg) * math.pi / 180;
-  return Offset(
-    center.dx + radius * math.sin(a),
-    center.dy - radius * math.cos(a),
-  );
-}
+/// **나침반의 핵심**이라 따로 빼서 테스트한다. 원판을 돌리는 각도도
+/// `screenRotationRad(0, heading)` — "북이 놓이는 자리"와 같은 값이다.
+double screenRotationRad(double bearingDeg, double headingDeg) =>
+    (bearingDeg - headingDeg) * math.pi / 180;
 
 /// 나침반 화면 전용 — GPS로 잡은 **현재 위치**.
 ///
@@ -84,9 +71,19 @@ class _WindCompassScreenState extends ConsumerState<WindCompassScreen> {
   bool _sensorTimedOut = false;
   Timer? _sensorTimer;
 
-  /// 방위각 표시용 저역통과 계수. 작을수록 부드럽지만 반응이 느리다.
-  static const double _headingAlpha = 0.15;
-  static const double _rawAlpha = 0.25;
+  /// 자기장이 왜곡돼 방위를 믿을 수 없는 상태(주변 금속·자석).
+  bool _fieldDistorted = false;
+
+  /// 저역통과 계수. 작을수록 부드럽지만 반응이 느리다.
+  ///
+  /// **가속도계를 특히 느리게 거른다(0.08).** 여기서 뽑는 건 "아래쪽이
+  /// 어디냐"(중력)인데, 손으로 돌리는 동안 생기는 가로 가속도가 그대로 섞이면
+  /// 중력 방향이 기울어지고, 그만큼 계산된 북이 흔들린다. 폰을 돌릴 때마다
+  /// 동쪽 표시가 조금씩 달라 보이던 원인 중 하나다(2026-08-09 제보).
+  /// 중력은 원래 거의 안 변하는 값이라 느리게 걸러도 잃을 게 없다.
+  static const double _accelAlpha = 0.08;
+  static const double _magAlpha = 0.20;
+  static const double _headingAlpha = 0.20;
 
   /// 이보다 기울면 "수평으로 놓으라"고 안내한다.
   static const double _tiltWarnDeg = 30;
@@ -121,12 +118,16 @@ class _WindCompassScreenState extends ConsumerState<WindCompassScreen> {
   }
 
   void _onAccel(AccelerometerEvent e) {
-    _accel = smoothVec3(_accel, (x: e.x, y: e.y, z: e.z), _rawAlpha);
+    _accel = smoothVec3(_accel, (x: e.x, y: e.y, z: e.z), _accelAlpha);
     _recompute();
   }
 
   void _onMag(MagnetometerEvent e) {
-    _mag = smoothVec3(_mag, (x: e.x, y: e.y, z: e.z), _rawAlpha);
+    final raw = (x: e.x, y: e.y, z: e.z);
+    // 왜곡 판정은 **거르기 전 원값**으로 한다 — 걸러 놓으면 순간적으로
+    // 자석에 가까워진 것이 평균에 묻혀 안 잡힌다.
+    _fieldDistorted = !isFieldPlausible(raw);
+    _mag = smoothVec3(_mag, raw, _magAlpha);
     _recompute();
   }
 
@@ -190,6 +191,7 @@ class _WindCompassScreenState extends ConsumerState<WindCompassScreen> {
                   tiltWarnDeg: _tiltWarnDeg,
                   sensorUnavailable:
                       _sensorTimedOut && _magneticHeading == null,
+                  fieldDistorted: _fieldDistorted,
                 ),
               ),
             ),
@@ -198,7 +200,7 @@ class _WindCompassScreenState extends ConsumerState<WindCompassScreen> {
             // 아니라 **지금 내 위치**의 바람을 보여준다는 걸 알 수 있어야
             // 한다.
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
               child: Text(
                 windCompassCaption,
                 textAlign: TextAlign.center,
@@ -207,6 +209,7 @@ class _WindCompassScreenState extends ConsumerState<WindCompassScreen> {
                 ),
               ),
             ),
+            const _AccuracyGuide(),
           ],
         ),
       ),
@@ -222,6 +225,7 @@ class _Body extends ConsumerWidget {
     required this.tilt,
     required this.tiltWarnDeg,
     required this.sensorUnavailable,
+    required this.fieldDistorted,
   });
 
   final SeaLocation location;
@@ -229,6 +233,7 @@ class _Body extends ConsumerWidget {
   final double tilt;
   final double tiltWarnDeg;
   final bool sensorUnavailable;
+  final bool fieldDistorted;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -271,6 +276,7 @@ class _Body extends ConsumerWidget {
           heading: magneticHeading,
           tilt: tilt,
           tiltWarnDeg: tiltWarnDeg,
+          fieldDistorted: fieldDistorted,
         ),
         // 설명 문구는 [WindCompassScreen]이 상태와 무관하게 하단에 깐다.
       ],
@@ -296,24 +302,36 @@ class _CompassDial extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return CustomPaint(
-      painter: _CompassPainter(
-        headingDeg: headingDeg ?? 0,
-        windFromDeg: windFromDeg,
-        dial: scheme.onSurfaceVariant,
-        cardinal: scheme.onSurface,
-        north: const Color(0xFFE53935),
-        wind: scheme.primary,
-        face: scheme.surfaceContainerHighest,
-        textScaler: MediaQuery.textScalerOf(context),
-      ),
-      child: Center(
-        // 가운데 숫자는 원판과 함께 돌지 않는다(뒤집히면 못 읽는다).
-        child: _CenterReadout(
-          windSpeedMs: windSpeedMs,
-          windFromDeg: windFromDeg,
+    final heading = headingDeg ?? 0;
+    final from = windFromDeg;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 원판은 **통째로** 돈다 — 참고 이미지의 짜임새를 그대로 살린다.
+        // 도는 각도는 "북이 화면에서 놓이는 자리"와 같다.
+        Transform.rotate(
+          angle: screenRotationRad(0, heading),
+          child: const CompassRose(),
         ),
-      ),
+        // 바람이 불어오는 방향. 지리 방위라 원판과 같은 기준으로 돈다.
+        if (from != null)
+          Transform.rotate(
+            angle: screenRotationRad(from, heading),
+            child: CustomPaint(
+              painter: WindArrowPainter(
+                color: const Color(0xFF29ABE2),
+                outline: scheme.surface,
+              ),
+            ),
+          ),
+        // 가운데 숫자는 **돌지 않는다**(원판을 따라 돌면 뒤집혀 못 읽는다).
+        Center(
+          child: _CenterReadout(
+            windSpeedMs: windSpeedMs,
+            windFromDeg: windFromDeg,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -353,139 +371,6 @@ class _CenterReadout extends StatelessWidget {
       ],
     );
   }
-}
-
-class _CompassPainter extends CustomPainter {
-  _CompassPainter({
-    required this.headingDeg,
-    required this.windFromDeg,
-    required this.dial,
-    required this.cardinal,
-    required this.north,
-    required this.wind,
-    required this.face,
-    required this.textScaler,
-  });
-
-  final double headingDeg;
-  final double? windFromDeg;
-  final Color dial;
-  final Color cardinal;
-  final Color north;
-  final Color wind;
-  final Color face;
-  final TextScaler textScaler;
-
-  Offset _at(Offset center, double bearing, double radius) =>
-      compassPointAt(center, bearing, headingDeg, radius);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final r = math.min(size.width, size.height) / 2;
-
-    canvas.drawCircle(center, r, Paint()..color = face);
-    canvas.drawCircle(
-      center,
-      r - 1,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..color = dial.withValues(alpha: 0.4),
-    );
-
-    // 눈금: 15도마다 짧게, 45도마다 길게.
-    for (var b = 0; b < 360; b += 15) {
-      final major = b % 45 == 0;
-      final inner = r - (major ? 18 : 10);
-      canvas.drawLine(
-        _at(center, b.toDouble(), inner),
-        _at(center, b.toDouble(), r - 3),
-        Paint()
-          ..strokeWidth = major ? 2.5 : 1.2
-          ..color = b == 0 ? north : dial.withValues(alpha: major ? 0.8 : 0.45),
-      );
-    }
-
-    // 동서남북 글자. **위치는 원판과 함께 돌지만 글자는 항상 똑바로** 세운다
-    // — 함께 돌리면 남쪽을 볼 때 글자가 뒤집혀 읽을 수 없다.
-    const labels = <(double, String)>[
-      (0, '북'),
-      (90, '동'),
-      (180, '남'),
-      (270, '서'),
-    ];
-    for (final (bearing, text) in labels) {
-      final isNorth = bearing == 0;
-      final painter = TextPainter(
-        text: TextSpan(
-          text: text,
-          style: TextStyle(
-            color: isNorth ? north : cardinal,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-        textScaler: textScaler,
-      )..layout();
-      final p = _at(center, bearing, r - 34);
-      painter.paint(
-        canvas,
-        Offset(p.dx - painter.width / 2, p.dy - painter.height / 2),
-      );
-    }
-
-    _paintWindArrow(canvas, center, r);
-
-    // 기기가 향한 쪽(화면 위)을 알려 주는 고정 표식. 원판이 돌아도 이 표식은
-    // 늘 화면 맨 위에 있어, 내가 어느 쪽을 보고 서 있는지 알 수 있다.
-    final marker = Path()
-      ..moveTo(center.dx, center.dy - r + 2)
-      ..lineTo(center.dx - 7, center.dy - r - 10)
-      ..lineTo(center.dx + 7, center.dy - r - 10)
-      ..close();
-    canvas.drawPath(marker, Paint()..color = dial.withValues(alpha: 0.7));
-  }
-
-  /// 바람이 **불어오는 쪽에서 가운데를 향해** 꽂히는 화살표.
-  /// 사용자 요구: "바깥에서 나침판 방향으로 화살표".
-  void _paintWindArrow(Canvas canvas, Offset center, double r) {
-    final from = windFromDeg;
-    if (from == null) return;
-
-    final tail = _at(center, from, r - 46); // 바깥쪽 시작점
-    final head = _at(center, from, r * 0.34); // 가운데 쪽 화살촉 끝
-    final paint = Paint()
-      ..color = wind
-      ..strokeWidth = 7
-      ..strokeCap = StrokeCap.round;
-
-    // 화살촉이 차지할 길이만큼 몸통을 짧게 그린다(촉과 겹치면 뭉툭해진다).
-    const headLen = 26.0;
-    final dir = head - tail;
-    final len = dir.distance;
-    if (len <= headLen) return;
-    final unit = dir / len;
-    canvas.drawLine(tail, head - unit * headLen, paint);
-
-    // 삼각형 화살촉.
-    final perp = Offset(-unit.dy, unit.dx);
-    final base = head - unit * headLen;
-    final path = Path()
-      ..moveTo(head.dx, head.dy)
-      ..lineTo(base.dx + perp.dx * 11, base.dy + perp.dy * 11)
-      ..lineTo(base.dx - perp.dx * 11, base.dy - perp.dy * 11)
-      ..close();
-    canvas.drawPath(path, Paint()..color = wind);
-  }
-
-  @override
-  bool shouldRepaint(_CompassPainter old) =>
-      old.headingDeg != headingDeg ||
-      old.windFromDeg != windFromDeg ||
-      old.dial != dial ||
-      old.wind != wind;
 }
 
 /// 나침반 아래 숫자 요약(풍향·풍속·돌풍).
@@ -547,19 +432,89 @@ class _Readout extends StatelessWidget {
   }
 }
 
-/// 센서 상태 안내(자력계 없음 / 기울어짐 / 대기 중).
+/// 화면 맨 아래 **정확도 높이는 법** 안내.
+///
+/// 휴대폰 나침반은 원래 오차가 몇 도씩 있고, 특히 **돌리는 동안·돌린 직후**
+/// 값이 흔들린다(자기 센서 보정 상태와 주변 금속의 영향). 방위를 정확히
+/// 봐야 할 때 무엇을 하면 되는지 화면에서 바로 알려 준다(사용자 요구).
+///
+/// 접었다 펴는 형태로 둔 이유: 늘 펼쳐 두면 나침반 원판이 그만큼 작아진다.
+/// 평소엔 한 줄만 보이고, 필요할 때만 펼친다.
+class _AccuracyGuide extends StatelessWidget {
+  const _AccuracyGuide();
+
+  /// 순서대로 지키면 오차가 가장 많이 줄어드는 항목들.
+  static const _steps = <(IconData, String)>[
+    (Icons.stay_current_portrait, '휴대폰을 바닥과 나란히 수평으로 놓습니다.'),
+    (Icons.gesture, '허공에 8자를 크게 3~4번 그립니다 — 지자기 센서 보정이 됩니다.'),
+    (Icons.no_cell, '자동차·철제 책상·자석 케이스·스피커에서 30cm 이상 떨어집니다.'),
+    (Icons.hourglass_bottom, '돌린 뒤 2~3초 기다립니다 — 값이 자리를 잡습니다.'),
+    (Icons.wb_twilight, '더 확실히 하려면 해가 뜨는 쪽(동)·지는 쪽(서)과 맞는지 한 번 봅니다.'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Theme(
+      // ExpansionTile의 기본 구분선을 없애 하단이 깔끔하게 보이게 한다.
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        dense: true,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        leading: Icon(Icons.help_outline, size: 20, color: scheme.primary),
+        title: Text(
+          '방향이 정확해야 할 때',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        children: [
+          for (final (icon, text) in _steps)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(icon, size: 16, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      text,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 4),
+          Text(
+            '휴대폰 나침반은 이렇게 해도 5~10도쯤 오차가 남습니다. '
+            '바람 방향은 큰 흐름을 보는 용도로 쓰고, 홀 공략처럼 정밀한 판단이 '
+            '필요하면 깃발·나뭇가지가 날리는 모습과 함께 보세요.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 센서 상태 안내(자력계 없음 / 자기장 왜곡 / 기울어짐 / 대기 중).
 class _Notice extends StatelessWidget {
   const _Notice({
     required this.sensorUnavailable,
     required this.heading,
     required this.tilt,
     required this.tiltWarnDeg,
+    required this.fieldDistorted,
   });
 
   final bool sensorUnavailable;
   final double? heading;
   final double tilt;
   final double tiltWarnDeg;
+  final bool fieldDistorted;
 
   @override
   Widget build(BuildContext context) {
@@ -569,6 +524,10 @@ class _Notice extends StatelessWidget {
       text = '이 기기에는 지자기 센서가 없어 방위를 표시할 수 없습니다.';
     } else if (heading == null) {
       text = '방위를 잡는 중…';
+    } else if (fieldDistorted) {
+      // 자기장 세기가 지구 자기장 범위를 벗어났다 = 가까이에 금속·자석이
+      // 있다. 이때 방위각은 계산은 되지만 값 자체를 믿으면 안 된다.
+      text = '주변 금속·자석 때문에 방위가 정확하지 않습니다. 자리를 옮겨 보세요.';
     } else if (tilt > tiltWarnDeg) {
       text = '휴대폰을 바닥과 나란히 수평으로 놓아 주세요.';
     } else {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/widgets/compact_text_scale.dart';
 import '../wind_compass_screen.dart';
+import 'compass_rose.dart';
 
 /// 위젯 테스트에서 이 버튼만 정확히 집기 위한 키.
 const windCompassButtonKey = Key('windCompassButton');
@@ -14,6 +15,12 @@ const windCompassButtonKey = Key('windCompassButton');
 class WindCompassButton extends StatelessWidget {
   const WindCompassButton({super.key});
 
+  /// 아이콘 한 변(논리 픽셀). 머티리얼 기본 아이콘(20~24)보다 크게 잡아
+  /// 나침반 모양이 알아볼 수 있게 한다(사용자 요구: "아이콘을 더 크게").
+  /// **글자 배율을 따라 키우지 않는다** — [CompactTextScale] 안이라 라벨은
+  /// 1.3까지만 커지고, 아이콘까지 함께 키우면 카드 폭을 밀어낸다.
+  static const double _iconSize = 30;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -25,12 +32,25 @@ class WindCompassButton extends StatelessWidget {
         onPressed: () => Navigator.of(context).push(
           MaterialPageRoute<void>(builder: (_) => const WindCompassScreen()),
         ),
-        icon: const Icon(Icons.explore_outlined, size: 20),
-        label: const Text('바람나침판'),
+        // 머티리얼 아이콘 대신 **화면과 같은 나침반**을 축소해 넣는다 —
+        // 눌렀을 때 나오는 것이 그대로 보이니 무슨 버튼인지 바로 안다.
+        // `mini`는 눈금 링·NE/NW 글자를 덜어 낸 판이다(이 크기에서 원본
+        // 그대로 줄이면 선이 뭉개져 회색 덩어리가 된다).
+        icon: SizedBox.square(
+          dimension: _iconSize,
+          child: CompassRose(
+            detail: CompassRoseDetail.mini,
+            color: scheme.primary,
+          ),
+        ),
+        label: const Text(
+          '바람나침판',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
         style: TextButton.styleFrom(
           foregroundColor: scheme.primary,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          visualDensity: VisualDensity.standard,
         ),
       ),
     );
