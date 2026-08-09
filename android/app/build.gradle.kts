@@ -24,7 +24,12 @@ android {
         applicationId = "com.golfwindy.golf_windy"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // **Google Mobile Ads SDK가 API 23 이상을 요구한다.** Flutter 기본값
+        // (21)을 그대로 두면 매니페스트 병합 단계에서 빌드가 깨진다
+        // (`uses-sdk:minSdkVersion 21 cannot be smaller than version 23
+        // declared in library [:google_mobile_ads]`). Flutter가 기본값을
+        // 올리더라도 낮아지지 않도록 maxOf로 둔다.
+        minSdk = maxOf(23, flutter.minSdkVersion)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
