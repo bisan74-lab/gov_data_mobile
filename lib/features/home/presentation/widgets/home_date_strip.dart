@@ -74,7 +74,10 @@ class _HomeDateStripState extends State<HomeDateStrip> {
 
   /// 배율 1.0에서 날짜 칩이 필요한 높이. 글자가 커지면 아래 [build]가 이
   /// 값을 배율만큼 늘려 준다(고정해 두면 칩이 세로로 넘친다).
-  static const double _baseHeight = 60;
+  ///
+  /// 요일(11px) + 간격 2 + 날짜(16px) ≈ 33px에 위아래 여백을 더한 값이다.
+  /// 더 줄이면 글자가 칩 테두리에 붙는다.
+  static const double _baseHeight = 46;
 
   @override
   Widget build(BuildContext context) {
@@ -86,6 +89,12 @@ class _HomeDateStripState extends State<HomeDateStrip> {
           context,
         ).clamp(maxScaleFactor: kCompactMaxTextScale).scale(14) /
         14;
+    // **색은 반드시 테마(ColorScheme)에서 가져온다.** 예전엔 흰색을 박아
+    // 뒀는데, 색이 있는 헤더 위에 놓일 걸 전제한 코드였다. 실제로는 기본
+    // 배경 위에 놓여서 **밝은 테마에서 흰 글자·흰 칸이 흰 배경에 묻혀 날짜가
+    // 통째로 안 보였다**(2026-08-09 제보). 고정색을 다시 넣지 말 것 —
+    // 밝은/어두운 테마 중 한쪽이 반드시 깨진다.
+    final scheme = Theme.of(context).colorScheme;
     return SizedBox(
       height: _baseHeight * scaled,
       child: ListView.builder(
@@ -101,14 +110,15 @@ class _HomeDateStripState extends State<HomeDateStrip> {
             child: CompactTextScale(
               child: Container(
                 width: _itemWidth - 6,
-                margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
+                margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 3),
                 decoration: BoxDecoration(
                   color: isSelected
-                      ? Colors.white
-                      : Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(14),
+                      ? scheme.primary
+                      : scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                  // 오늘은 선택돼 있지 않아도 테두리로 구분한다.
                   border: isToday && !isSelected
-                      ? Border.all(color: Colors.white70)
+                      ? Border.all(color: scheme.primary, width: 1.5)
                       : null,
                 ),
                 child: Column(
@@ -118,20 +128,20 @@ class _HomeDateStripState extends State<HomeDateStrip> {
                       weekdayKo(d),
                       style: TextStyle(
                         fontSize: 11,
+                        height: 1.1,
                         color: isSelected
-                            ? const Color(0xFF0E3454)
-                            : Colors.white70,
+                            ? scheme.onPrimary
+                            : scheme.onSurfaceVariant,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 1),
                     Text(
                       '${d.day}',
                       style: TextStyle(
                         fontSize: 16,
+                        height: 1.1,
                         fontWeight: FontWeight.bold,
-                        color: isSelected
-                            ? const Color(0xFF0E3454)
-                            : Colors.white,
+                        color: isSelected ? scheme.onPrimary : scheme.onSurface,
                       ),
                     ),
                   ],

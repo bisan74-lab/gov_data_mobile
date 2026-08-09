@@ -260,7 +260,6 @@ class _Body extends ConsumerWidget {
                 child: _CompassDial(
                   headingDeg: trueHeading,
                   windFromDeg: now?.windDirDeg,
-                  windSpeedMs: now?.windSpeedMs,
                 ),
               ),
             ),
@@ -286,18 +285,13 @@ class _Body extends ConsumerWidget {
 
 /// 나침반 원판. [headingDeg]가 null이면(센서 대기) 북쪽을 위로 둔 채 그린다.
 class _CompassDial extends StatelessWidget {
-  const _CompassDial({
-    required this.headingDeg,
-    required this.windFromDeg,
-    required this.windSpeedMs,
-  });
+  const _CompassDial({required this.headingDeg, required this.windFromDeg});
 
   /// 기기 위쪽이 가리키는 **진북 기준** 방위. 원판을 이만큼 반대로 돌린다.
   final double? headingDeg;
 
   /// 바람이 **불어오는** 방향(기상 관례, 진북 기준). null이면 화살표를 뺀다.
   final double? windFromDeg;
-  final double? windSpeedMs;
 
   @override
   Widget build(BuildContext context) {
@@ -318,50 +312,9 @@ class _CompassDial extends StatelessWidget {
             angle: screenRotationRad(from, heading),
             child: const WindArrowOverlay(),
           ),
-        // 가운데 숫자는 **돌지 않는다**(원판을 따라 돌면 뒤집혀 못 읽는다).
-        Center(
-          child: _CenterReadout(
-            windSpeedMs: windSpeedMs,
-            windFromDeg: windFromDeg,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _CenterReadout extends StatelessWidget {
-  const _CenterReadout({required this.windSpeedMs, required this.windFromDeg});
-
-  final double? windSpeedMs;
-  final double? windFromDeg;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    if (windSpeedMs == null || windFromDeg == null) {
-      return Text(
-        '바람 정보\n확인 중…',
-        textAlign: TextAlign.center,
-        style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
-      );
-    }
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          '${compassKo(windFromDeg!)}풍',
-          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
-        ),
-        Text(
-          formatWind(windSpeedMs!),
-          style: TextStyle(
-            color: scheme.onSurface,
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-            height: 1.1,
-          ),
-        ),
+        // **가운데에 숫자를 얹지 않는다.** 원판 그림(별·눈금)이 배경이라
+        // 글자가 묻혀 잘 안 읽혔다(사용자 요구로 삭제). 같은 값은 원판
+        // 아래 [_Readout]에 깔끔한 배경으로 이미 나온다.
       ],
     );
   }
@@ -426,24 +379,23 @@ class _Readout extends StatelessWidget {
   }
 }
 
-/// 화면 맨 아래 **정확도 높이는 법** 안내.
+/// 화면 맨 아래 **나침판 정확도** 안내.
 ///
-/// 휴대폰 나침반은 원래 오차가 몇 도씩 있고, 특히 **돌리는 동안·돌린 직후**
-/// 값이 흔들린다(자기 센서 보정 상태와 주변 금속의 영향). 방위를 정확히
-/// 봐야 할 때 무엇을 하면 되는지 화면에서 바로 알려 준다(사용자 요구).
+/// 휴대폰 나침반은 원래 오차가 있고, 특히 돌리는 동안·돌린 직후 값이
+/// 흔들린다. 무엇을 하면 되는지 화면에서 바로 알려 준다(사용자 요구).
 ///
-/// 접었다 펴는 형태로 둔 이유: 늘 펼쳐 두면 나침반 원판이 그만큼 작아진다.
-/// 평소엔 한 줄만 보이고, 필요할 때만 펼친다.
+/// **짧게 유지할 것.** 처음엔 다섯 줄이었는데 "그대로 해도 잘 안 맞기도
+/// 하니 간단하게만" 이라는 제보를 받아 세 줄로 줄였다. 해 뜨는 방향과
+/// 대조하라는 항목은 실제로 잘 안 맞아 뺐다.
+///
+/// 접었다 펴는 형태인 이유: 늘 펼쳐 두면 나침반 원판이 그만큼 작아진다.
 class _AccuracyGuide extends StatelessWidget {
   const _AccuracyGuide();
 
-  /// 순서대로 지키면 오차가 가장 많이 줄어드는 항목들.
   static const _steps = <(IconData, String)>[
-    (Icons.stay_current_portrait, '휴대폰을 바닥과 나란히 수평으로 놓습니다.'),
-    (Icons.gesture, '허공에 8자를 크게 3~4번 그립니다 — 지자기 센서 보정이 됩니다.'),
-    (Icons.no_cell, '자동차·철제 책상·자석 케이스·스피커에서 30cm 이상 떨어집니다.'),
-    (Icons.hourglass_bottom, '돌린 뒤 2~3초 기다립니다 — 값이 자리를 잡습니다.'),
-    (Icons.wb_twilight, '더 확실히 하려면 해가 뜨는 쪽(동)·지는 쪽(서)과 맞는지 한 번 봅니다.'),
+    (Icons.stay_current_portrait, '휴대폰을 수평으로 놓습니다.'),
+    (Icons.gesture, '허공에 8자를 2번 그립니다.'),
+    (Icons.hourglass_bottom, '수평으로 2~3초 기다린 뒤 확인합니다.'),
   ];
 
   @override
@@ -457,10 +409,7 @@ class _AccuracyGuide extends StatelessWidget {
         tilePadding: const EdgeInsets.symmetric(horizontal: 16),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         leading: Icon(Icons.help_outline, size: 20, color: scheme.primary),
-        title: Text(
-          '방향이 정확해야 할 때',
-          style: Theme.of(context).textTheme.labelLarge,
-        ),
+        title: Text('나침판 정확도', style: Theme.of(context).textTheme.labelLarge),
         children: [
           for (final (icon, text) in _steps)
             Padding(
@@ -480,10 +429,10 @@ class _AccuracyGuide extends StatelessWidget {
               ),
             ),
           const SizedBox(height: 4),
+          // 오차가 남는다는 사실은 남겨 둔다 — 이걸 빼면 표시된 방향을
+          // 실제보다 정확한 것으로 믿게 된다.
           Text(
-            '휴대폰 나침반은 이렇게 해도 5~10도쯤 오차가 남습니다. '
-            '바람 방향은 큰 흐름을 보는 용도로 쓰고, 홀 공략처럼 정밀한 판단이 '
-            '필요하면 깃발·나뭇가지가 날리는 모습과 함께 보세요.',
+            '휴대폰 나침반은 이렇게 해도 5~10도쯤 오차가 남습니다.',
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),

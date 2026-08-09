@@ -53,7 +53,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               date: _date,
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              // 날짜 띠 위아래 여백. 아래는 0으로 두고 아래쪽 본문 패딩만
+              // 남긴다 — 두 여백이 겹쳐 날짜와 바람나침판 사이가 휑했다.
+              padding: const EdgeInsets.only(top: 4),
               child: HomeDateStrip(
                 date: _date,
                 minDate: today,
@@ -63,7 +65,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
             Padding(
               // 아래 여백은 광고 띠가 대신하므로 24 → 8로 줄인다.
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: forecastAsync.when(
                 loading: () => const _LoadingCard(),
                 error: (e, _) => _ErrorCard(message: '$e'),
@@ -129,11 +131,12 @@ class _DayContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // 라운딩 지수 카드 **위 오른쪽 빈 공간**에 놓는 바람나침판 버튼.
+        // 위 여백을 두지 않는다 — 날짜 띠와 이 버튼 사이가 휑하다는 제보.
         const Align(
           alignment: Alignment.centerRight,
           child: WindCompassButton(),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 2),
         _RoundIndexCard(index: index, rep: rep),
         const SizedBox(height: 12),
         _OutfitCard(text: outfit, tempC: rep.tempC),
@@ -522,9 +525,12 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isToday = DateUtils.isSameDay(date, DateTime.now());
+    // 날짜는 **첫 줄 오른쪽 끝**에 붙인다 — 세 줄로 쌓여 있던 것을 두 줄로
+    // 줄이려는 것이다(사용자 요구). 왼쪽 골프장명이 길면 말줄임으로 흡수되고
+    // 날짜는 자기 폭을 지킨다.
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -539,12 +545,27 @@ class _Header extends StatelessWidget {
             children: [
               Icon(Icons.place, size: 18, color: scheme.onPrimary),
               const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  title,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: scheme.onPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    height: 1.15,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               Text(
-                title,
+                isToday
+                    ? '오늘 ${date.month}/${date.day}'
+                    : '${date.month}/${date.day} (${weekdayKo(date)})',
                 style: TextStyle(
-                  color: scheme.onPrimary,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+                  color: scheme.onPrimary.withValues(alpha: 0.95),
+                  fontWeight: FontWeight.w600,
+                  height: 1.15,
                 ),
               ),
             ],
@@ -552,14 +573,12 @@ class _Header extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             subtitle,
-            style: TextStyle(color: scheme.onPrimary.withValues(alpha: 0.9)),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            isToday
-                ? '오늘 ${date.month}/${date.day}'
-                : '${date.month}/${date.day} (${weekdayKo(date)})',
-            style: TextStyle(color: scheme.onPrimary.withValues(alpha: 0.9)),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: scheme.onPrimary.withValues(alpha: 0.9),
+              height: 1.15,
+            ),
           ),
         ],
       ),

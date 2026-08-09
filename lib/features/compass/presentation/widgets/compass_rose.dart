@@ -43,29 +43,46 @@ class CompassRose extends StatelessWidget {
   }
 }
 
-/// 바깥에서 가운데를 향해 꽂히는 바람 화살표. 12시 방향으로 그려지므로,
-/// 지리 방위에 맞추는 회전은 바깥에서 `Transform.rotate`로 준다.
+/// 바깥에서 가운데를 향해 꽂히는 바람 화살표 **세 줄**. 12시 방향으로
+/// 그려지므로, 지리 방위에 맞추는 회전은 바깥에서 `Transform.rotate`로 준다.
 ///
-/// 위치·크기는 원판 지름에 대한 비율로 잡는다 — 반지름의 **90%에서 22%까지**
-/// 뻗어, 바깥 눈금은 가리지 않으면서 가운데 숫자도 침범하지 않는다.
+/// 한 줄이 아니라 셋인 이유: 한 줄만 있으면 "이 지점을 가리키는 표시"처럼
+/// 보이는데, 실제로는 **면 전체에 부는 바람**이다. 나란한 세 줄이 흐름으로
+/// 읽힌다(사용자 요구). **가운데가 가장 길고 굵다** — 양쪽이 같은 길이면
+/// 세 줄이 한 덩어리로 뭉쳐 보인다.
+///
+/// 위치·크기는 원판 지름에 대한 비율로 잡아 어떤 화면에서도 같은 비례다.
 class WindArrowOverlay extends StatelessWidget {
   const WindArrowOverlay({super.key});
 
+  /// (가로 오프셋, 길이 비율, 세로 위치) — 가운데 줄이 길고 바깥 두 줄은 짧다.
+  static const _lanes = <(double, double, double)>[
+    (-0.30, 0.24, -0.86),
+    (0.0, 0.34, -0.85),
+    (0.30, 0.24, -0.86),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: const Alignment(0, -0.85),
-      child: FractionallySizedBox(
-        heightFactor: 0.34,
-        child: AspectRatio(
-          aspectRatio: _windArrowAspect,
-          child: Image.asset(
-            windArrowAsset,
-            fit: BoxFit.contain,
-            filterQuality: FilterQuality.medium,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        for (final (dx, heightFactor, dy) in _lanes)
+          Align(
+            alignment: Alignment(dx, dy),
+            child: FractionallySizedBox(
+              heightFactor: heightFactor,
+              child: AspectRatio(
+                aspectRatio: _windArrowAspect,
+                child: Image.asset(
+                  windArrowAsset,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.medium,
+                ),
+              ),
+            ),
           ),
-        ),
-      ),
+      ],
     );
   }
 }

@@ -111,23 +111,35 @@ void main() {
     expect(find.byType(WindArrowOverlay), findsOneWidget);
     expect(tester.takeException(), isNull);
 
+    // 화살표는 **세 줄**이고 가운데가 가장 길다(양쪽이 같으면 세 줄이 한
+    // 덩어리로 뭉쳐 보인다).
+    // Align은 상자 전체를 차지하므로 **안쪽 이미지**를 재야 한다.
+    final arrows = find.descendant(
+      of: find.byType(WindArrowOverlay),
+      matching: find.byType(Image),
+    );
+    expect(arrows, findsNWidgets(3));
+    final rects = [for (var i = 0; i < 3; i++) tester.getRect(arrows.at(i))];
+    // 회전된 상태라 "길이"는 긴 변으로 본다.
+    double lengthOf(Rect r) => r.longestSide;
+    expect(
+      lengthOf(rects[1]),
+      greaterThan(lengthOf(rects[0])),
+      reason: '가운데 화살표가 더 길지 않다',
+    );
+    expect(lengthOf(rects[1]), greaterThan(lengthOf(rects[2])));
+
     // 풍향 130도 − 기기 방향 40도 = 90도. 화살표는 원판 **오른쪽**에서
     // 가운데를 향해 놓여야 한다. 회전을 안 걸거나 부호가 뒤집히면 위나
-    // 왼쪽으로 가므로, 이 한 줄이 회전 사슬 전체를 검사한다.
+    // 왼쪽으로 가므로, 이 검사가 회전 사슬 전체를 확인한다.
     final dial = tester.getRect(find.byType(CompassRose));
-    // Align은 상자 전체를 차지하므로 **안쪽 이미지**를 재야 한다.
-    final arrow = tester.getRect(
-      find.descendant(
-        of: find.byType(WindArrowOverlay),
-        matching: find.byType(Image),
-      ),
-    );
+    final middle = rects[1];
     expect(
-      arrow.center.dx,
+      middle.center.dx,
       greaterThan(dial.center.dx + dial.width * 0.15),
       reason: '화살표가 오른쪽(동쪽)에 놓이지 않았다',
     );
-    expect(arrow.center.dy, closeTo(dial.center.dy, dial.height * 0.1));
+    expect(middle.center.dy, closeTo(dial.center.dy, dial.height * 0.1));
 
     // 풍향(130도)에서 기기 방향(40도)을 뺀 90도 — 화살표는 화면 오른쪽에서
     // 가운데를 향해야 한다.
