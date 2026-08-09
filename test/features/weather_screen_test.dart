@@ -108,6 +108,26 @@ void main() {
 
     // 표가 열리면 지도 모드 전용 시간 스크러버가 사라진다.
     expect(find.byType(Slider), findsNothing);
+
+    // 이미 보고 있는 화면으로 또 들어가라고 권하는 버튼은 지도만 가린다 —
+    // 상세 예보가 열린 동안엔 마커의 상세 버튼이 사라져야 한다.
+    expect(find.byKey(golfMarkerDetailButtonKey), findsNothing);
+  });
+
+  testWidgets('상세 예보를 닫으면 마커의 상세 예보 버튼이 다시 나타난다', (tester) async {
+    await pumpWeatherScreen(tester);
+    expect(find.byKey(golfMarkerDetailButtonKey), findsOneWidget);
+
+    await tester.tap(find.byKey(golfMarkerDetailButtonKey));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(find.byKey(golfMarkerDetailButtonKey), findsNothing);
+
+    // 표의 닫기(X)로 지도 모드로 돌아온다.
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(find.byType(Slider), findsOneWidget); // 지도 모드로 복귀
+    expect(find.byKey(golfMarkerDetailButtonKey), findsOneWidget);
   });
 
   testWidgets('큰 글자에서도 상세 예보 버튼이 골프장 이름 위로 파고들지 않는다', (tester) async {

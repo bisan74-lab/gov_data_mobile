@@ -34,6 +34,7 @@ class GolfMarkerLayer extends StatelessWidget {
     required this.scale,
     required this.selected,
     this.onTap,
+    this.showDetailButton = true,
   });
 
   final MapProjection projection;
@@ -44,6 +45,11 @@ class GolfMarkerLayer extends StatelessWidget {
 
   /// 마커(초록 점 + 이름) 또는 그 아래 상세 예보 버튼 탭 시 호출.
   final VoidCallback? onTap;
+
+  /// 이름 아래 "상세 예보" 버튼을 보일지. **상세 예보가 이미 열려 있으면
+  /// false**로 넘겨 숨긴다 — 보고 있는 화면으로 또 들어가라고 권하는 꼴이라
+  /// 지도만 가린다. 이름 탭은 그대로 열려 있어 동작이 사라지진 않는다.
+  final bool showDetailButton;
 
   /// 이름 라벨 글자 크기·점 지름·세로 여백(이름 행 높이 계산에 쓴다).
   static const double _nameFontSize = 12.5;
@@ -147,61 +153,66 @@ class GolfMarkerLayer extends StatelessWidget {
         ),
         // 이름 바로 아래 상세 예보 버튼. 같은 앵커에서 이름 행 높이만큼만
         // 내려 그려, 초록 점의 지리 위치는 그대로 유지된다.
-        Positioned(
-          left: o.dx,
-          top: o.dy,
-          child: Transform.scale(
-            scale: 1 / scale,
-            alignment: Alignment.topLeft,
-            child: Transform.translate(
-              offset: Offset(_detailButtonIndent, _nameRowHalfHeight(context)),
-              child: GestureDetector(
-                key: golfMarkerDetailButtonKey,
-                behavior: HitTestBehavior.opaque,
-                onTap: onTap,
-                // 아이콘만으로는 무슨 버튼인지 알기 어렵다는 제보를 받아
-                // 글자를 함께 넣었다. 지도 위 작은 칩이라 글자 배율은
-                // [CompactTextScale]로 눌러 둔다(칩이 지도를 덮지 않게).
-                child: CompactTextScale(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xE6194D2B),
-                      borderRadius: BorderRadius.circular(11),
-                      border: Border.all(color: Colors.white, width: 1.2),
-                      boxShadow: const [
-                        BoxShadow(color: Colors.black54, blurRadius: 3),
-                      ],
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          golfDetailForecastIcon,
-                          size: 12,
-                          color: Colors.white,
-                        ),
-                        SizedBox(width: 4),
-                        Text(
-                          '상세 예보',
-                          style: TextStyle(
+        // 상세 예보가 이미 열려 있으면 그리지 않는다([showDetailButton]).
+        if (showDetailButton)
+          Positioned(
+            left: o.dx,
+            top: o.dy,
+            child: Transform.scale(
+              scale: 1 / scale,
+              alignment: Alignment.topLeft,
+              child: Transform.translate(
+                offset: Offset(
+                  _detailButtonIndent,
+                  _nameRowHalfHeight(context),
+                ),
+                child: GestureDetector(
+                  key: golfMarkerDetailButtonKey,
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onTap,
+                  // 아이콘만으로는 무슨 버튼인지 알기 어렵다는 제보를 받아
+                  // 글자를 함께 넣었다. 지도 위 작은 칩이라 글자 배율은
+                  // [CompactTextScale]로 눌러 둔다(칩이 지도를 덮지 않게).
+                  child: CompactTextScale(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xE6194D2B),
+                        borderRadius: BorderRadius.circular(11),
+                        border: Border.all(color: Colors.white, width: 1.2),
+                        boxShadow: const [
+                          BoxShadow(color: Colors.black54, blurRadius: 3),
+                        ],
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            golfDetailForecastIcon,
+                            size: 12,
                             color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            height: 1.1,
                           ),
-                        ),
-                      ],
+                          SizedBox(width: 4),
+                          Text(
+                            '상세 예보',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              height: 1.1,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
       ],
     );
   }

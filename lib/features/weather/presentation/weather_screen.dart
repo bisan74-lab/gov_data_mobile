@@ -895,6 +895,9 @@ class _WindMapAreaState extends State<_WindMapArea> {
                     scale: _scale,
                     selected: _selectedCourse(),
                     onTap: widget.onOpenDetail,
+                    // 상세 예보를 이미 보고 있으면 "상세 예보" 버튼을 숨긴다
+                    // (지도만 가릴 뿐이다). 이름 탭은 그대로 살아 있다.
+                    showDetailButton: widget.forecastPoint == null,
                   ),
                   // 상세 예보 표가 열려 있으면 골프장 위치에 윈디식 방향
                   // 나침반(로즈)을 띄운다.
@@ -1288,10 +1291,13 @@ SeaLocation pointSeaLocation(double lat, double lon) {
   );
 }
 
-/// 선택 지점 위에 뜨는 윈디식 방향 나침반. 가운데 점을 중심으로 바람·너울·
-/// 너울2가 각자 진행 방향으로 뻗는 **가늘고 긴 색 막대**로 그리고, 글자를
-/// 막대 안에 넣어(작은 글씨) 막대끼리 가까워도 서로 가려지지 않게 한다.
-/// 지도를 확대해도 크기가 일정하도록 반대로 축소한다.
+/// 선택 지점 위에 뜨는 윈디식 방향 나침반. 가운데 점을 중심으로 바람이
+/// 진행 방향으로 뻗는 **가늘고 긴 색 막대**로 그리고, 글자를 막대 안에
+/// 넣어(작은 글씨) 읽히게 한다. 지도를 확대해도 크기가 일정하도록 반대로
+/// 축소한다.
+///
+/// GOLF: 바다윈디 원본은 여기에 너울·너울2 막대도 그렸지만, 골프장은 모두
+/// 육지라 빼 뒀다(상세 예보 표에서 뺀 것과 같은 이유).
 class _ForecastRose extends StatelessWidget {
   const _ForecastRose({
     required this.scale,
@@ -1311,31 +1317,16 @@ class _ForecastRose extends StatelessWidget {
   static const Offset _c = Offset(_d / 2, _d / 2);
 
   static const _windC = Color(0xFF3FB6DC);
-  static const _swellC = Color(0xFFEB963A);
-  static const _swell2C = Color(0xFF7CB342);
 
   @override
   Widget build(BuildContext context) {
+    // GOLF: 바람 막대 하나만 그린다(너울·너울2는 육지라 제외).
     final bars = <({double dir, Color color, String label, String value})>[
       (
         dir: hour.windDirectionDeg,
         color: _windC,
         label: '바람',
         value: '${hour.windSpeedMs.round()}m/s',
-      ),
-      (
-        dir: hour.swellDirectionDeg,
-        color: _swellC,
-        label: '너울',
-        value:
-            '${hour.swellHeightM.toStringAsFixed(1)}m·${hour.swellPeriodS.round()}s',
-      ),
-      (
-        dir: hour.swell2DirectionDeg,
-        color: _swell2C,
-        label: '너울2',
-        value:
-            '${hour.swell2HeightM.toStringAsFixed(1)}m·${hour.swell2PeriodS.round()}s',
       ),
     ];
     return Positioned(
@@ -1817,17 +1808,11 @@ class _Meteogram extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const rows = [
-      '시간',
-      '날씨',
-      '기온 °C',
-      '바람 m/s',
-      '돌풍 m/s',
-      '너울 m',
-      '너울2 m',
-      '파력 kW/m',
-      '수온 °C',
-    ];
+    // GOLF: 너울·너울2·파력·수온은 **넣지 않는다**. 골프장은 모두 육지라
+    // 해양 항목이 의미가 없다(바다윈디에서 그대로 가져온 표라 원래 있었다).
+    // 되살리지 말 것 — 육지 좌표의 파고·수온은 근처 바다 격자에서 끌어온
+    // 값이라 그 골프장의 값처럼 오해만 준다.
+    const rows = ['시간', '날씨', '기온 °C', '바람 m/s', '돌풍 m/s'];
     // 단위(m/s 등)까지 잘리지 않도록 라벨 글씨를 조금 작게 한다.
     final labelStyle = Theme.of(
       context,
@@ -1919,8 +1904,6 @@ class _MeteogramColumn extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final windC = windSpeedColor(hour.windSpeedMs);
     final gustC = windSpeedColor(hour.windGustMs);
-    final swellC = waveHeightColor(hour.swellHeightM);
-    final swell2C = waveHeightColor(hour.swell2HeightM);
     final isNight = hour.time.hour < 6 || hour.time.hour >= 19;
 
     Widget cell(
@@ -2045,18 +2028,9 @@ class _MeteogramColumn extends StatelessWidget {
               '${hour.windGustMs.round()}',
               bg: gustC.withValues(alpha: 0.65),
             ),
-            arrowCell(
-              hour.swellHeightM.toStringAsFixed(1),
-              hour.swellDirectionDeg,
-              bg: swellC.withValues(alpha: 0.85),
-            ),
-            arrowCell(
-              hour.swell2HeightM.toStringAsFixed(1),
-              hour.swell2DirectionDeg,
-              bg: swell2C.withValues(alpha: 0.7),
-            ),
-            cell(formatWavePower(hour.wavePowerKw)),
-            cell('${hour.waterTempC.round()}'),
+            // GOLF: 너울·너울2·파력·수온 칸은 빼 둔다(육지라 무의미) —
+            // 위 `rows` 라벨 목록과 **개수·순서가 반드시 같아야** 표가
+            // 어긋나지 않는다.
           ],
         ),
       ),
