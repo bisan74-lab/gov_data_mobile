@@ -164,8 +164,24 @@ dart format lib test     # 커밋 전 포맷
 - 실 API 키(`DATA_GO_KR_API_KEY`)도 Secret에서만 주입한다. 없으면 합성(mock)
   데이터로 동작한다.
 
-**스토어 제출용 AAB 워크플로는 아직 없다.** 만들 때는 업로드 키(Secret) 서명과
-`ads=real` 고정이 필요하다.
+**스토어 제출은 `release-aab.yml`**(workflow_dispatch) — 업로드 키로 서명하고
+실제 광고 ID를 넣은 App Bundle을 만들어 Release(`store-build-N`)에 첨부한다.
+
+| | `release-apk.yml` | `release-aab.yml` |
+|---|---|---|
+| 서명 | debug 키 | 업로드 키(Secret) |
+| 광고 | `ads` 입력(기본 테스트) | 실제 광고 ID(Secret) |
+| 용도 | 기기에 설치해 확인 | Play Console 제출 |
+
+- **릴리스 서명은 `android/key.properties`가 있을 때만 적용되고 없으면 debug
+  키로 폴백한다** — 이 폴백을 없애면 키가 없는 CI·새 클론에서 빌드가 깨진다.
+  `key.properties`는 gitignore돼 있고 러너가 Secret에서 만들어 쓴 뒤 지운다.
+- **AAB 워크플로는 Secret이 하나라도 없으면 빌드를 멈춘다.** 조용히 debug
+  키·테스트 광고로 만들어진 번들을 스토어에 올리는 사고를 막기 위해서다.
+  **형태까지 본다** — 앱 ID(`~`)와 광고 단위 ID(`/`)는 앞부분이 같아 바꿔
+  넣기 쉬운데, 그러면 빌드는 성공하고 광고만 안 나와 원인을 찾기 어렵다.
+- **같은 버전 코드는 Play에 두 번 못 올린다** — 제출 전 `pubspec.yaml`의
+  `version: 0.1.0+N`에서 `+N`을 올린다.
 
 ## 반드시 지킬 것
 

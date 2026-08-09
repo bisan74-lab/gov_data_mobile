@@ -1,9 +1,26 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// 릴리스 서명 정보. `android/key.properties`(gitignore됨)가 있을 때만 읽어
+// 실제 업로드 키로 서명하고, 없으면 아래에서 debug 키로 폴백한다.
+// **이 폴백을 없애면 키가 없는 CI(테스트 APK 빌드)나 새로 클론한 환경에서
+// 빌드가 깨진다.**
+// 파일 형식:
+//   storeFile=/절대/경로/upload-keystore.jks
+//   storePassword=...
+//   keyAlias=golfwindy
+//   keyPassword=...
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("key.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val hasReleaseKeystore = keystoreProperties.getProperty("storeFile") != null
 
 // Play Console이 요구하는 대상 API 수준.
 //
@@ -68,11 +85,27 @@ android {
                 ?: "ca-app-pub-3940256099942544~3347511713"
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // 업로드 키가 준비된 환경에서만 실제 서명한다. 없으면 debug 키로
+            // 서명해 `flutter build apk --release`(테스트 배포)가 계속 된다 —
+            // 단, **debug 키로 서명된 빌드는 Play Store에 올릴 수 없다.**
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }
