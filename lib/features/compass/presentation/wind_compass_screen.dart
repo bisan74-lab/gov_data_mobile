@@ -301,7 +301,6 @@ class _CompassDial extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final heading = headingDeg ?? 0;
     final from = windFromDeg;
     return Stack(
@@ -317,12 +316,7 @@ class _CompassDial extends StatelessWidget {
         if (from != null)
           Transform.rotate(
             angle: screenRotationRad(from, heading),
-            child: CustomPaint(
-              painter: WindArrowPainter(
-                color: const Color(0xFF29ABE2),
-                outline: scheme.surface,
-              ),
-            ),
+            child: const WindArrowOverlay(),
           ),
         // 가운데 숫자는 **돌지 않는다**(원판을 따라 돌면 뒤집혀 못 읽는다).
         Center(

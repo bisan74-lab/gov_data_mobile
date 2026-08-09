@@ -97,12 +97,7 @@ void main() {
                 ),
                 Transform.rotate(
                   angle: screenRotationRad(windFrom, heading),
-                  child: CustomPaint(
-                    painter: WindArrowPainter(
-                      color: const Color(0xFF29ABE2),
-                      outline: Colors.white,
-                    ),
-                  ),
+                  child: const WindArrowOverlay(),
                 ),
               ],
             ),
@@ -113,7 +108,26 @@ void main() {
     await tester.pump();
 
     expect(find.byType(CompassRose), findsOneWidget);
+    expect(find.byType(WindArrowOverlay), findsOneWidget);
     expect(tester.takeException(), isNull);
+
+    // 풍향 130도 − 기기 방향 40도 = 90도. 화살표는 원판 **오른쪽**에서
+    // 가운데를 향해 놓여야 한다. 회전을 안 걸거나 부호가 뒤집히면 위나
+    // 왼쪽으로 가므로, 이 한 줄이 회전 사슬 전체를 검사한다.
+    final dial = tester.getRect(find.byType(CompassRose));
+    // Align은 상자 전체를 차지하므로 **안쪽 이미지**를 재야 한다.
+    final arrow = tester.getRect(
+      find.descendant(
+        of: find.byType(WindArrowOverlay),
+        matching: find.byType(Image),
+      ),
+    );
+    expect(
+      arrow.center.dx,
+      greaterThan(dial.center.dx + dial.width * 0.15),
+      reason: '화살표가 오른쪽(동쪽)에 놓이지 않았다',
+    );
+    expect(arrow.center.dy, closeTo(dial.center.dy, dial.height * 0.1));
 
     // 풍향(130도)에서 기기 방향(40도)을 뺀 90도 — 화살표는 화면 오른쪽에서
     // 가운데를 향해야 한다.

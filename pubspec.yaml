@@ -33,6 +33,8 @@ flutter:
   assets:
     # 광고가 없을 때 배너 자리를 채우는 앱 소개 박스가 쓴다.
     - assets/icon/app_icon.png
+    # 바람나침판 — 원판(알파 마스크)과 바람 화살표.
+    - assets/compass/
 
 # 런처 아이콘 생성: dart run flutter_launcher_icons
 flutter_launcher_icons:
