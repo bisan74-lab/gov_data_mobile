@@ -2,7 +2,7 @@ name: golf_windy
 description: "전국 골프장 시간대별 바람·날씨 예보 - 골프윈디 (GolfWindy)"
 publish_to: 'none'
 
-version: 0.1.0+2
+version: 0.1.0+3
 
 environment:
   sdk: ^3.8.1
