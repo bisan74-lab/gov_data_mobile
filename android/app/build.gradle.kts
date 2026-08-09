@@ -40,9 +40,16 @@ android {
         // `flutter build`는 임의의 Gradle -P 인자를 넘겨주지 않으므로
         // 환경변수를 먼저 본다:
         //   ADMOB_APP_ID=ca-app-pub-XXXX~YYYY flutter build appbundle
+        //
+        // **빈 문자열은 "없음"으로 친다**(`takeIf { it.isNotBlank() }`).
+        // 환경변수를 빈 값으로 넘기는 일이 흔한데(워크플로가 조건부로
+        // 주입할 때), Kotlin `?:`는 null에서만 폴백하므로 그대로 두면
+        // 매니페스트에 `android:value=""`가 박힌다. 그러면 앱이 켜지자마자
+        // 광고 SDK 초기화에서 죽는다("initialized without an application ID").
         manifestPlaceholders["admobAppId"] =
-            System.getenv("ADMOB_APP_ID")
+            System.getenv("ADMOB_APP_ID")?.takeIf { it.isNotBlank() }
                 ?: (project.findProperty("admob_app_id") as String?)
+                    ?.takeIf { it.isNotBlank() }
                 ?: "ca-app-pub-3940256099942544~3347511713"
     }
 

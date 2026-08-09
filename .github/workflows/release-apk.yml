@@ -5,6 +5,13 @@ name: Release APK
 #  누구나 로그인 없이 받을 수 있는 Release 첨부 파일 방식을 쓴다.)
 on:
   workflow_dispatch:
+    inputs:
+      ads:
+        description: '광고 (test=구글 테스트 광고 / real=실제 AdMob 광고)'
+        type: choice
+        default: test
+        options: [test, real]
+        required: true
 
 permissions:
   contents: write
@@ -29,13 +36,60 @@ jobs:
       - name: 의존성 설치
         run: flutter pub get
 
-      # 실 API 키는 저장소 Secret(DATA_GO_KR_API_KEY)에서만 주입한다 —
-      # 코드·로그에 키가 노출되지 않는다. Secret이 없으면 빈 값이 들어가
-      # 자동으로 합성(mock) 데이터로 동작한다.
+      # 광고 ID를 실제 것으로 쓸지 결정한다.
+      #
+      # **기본은 테스트 광고다.** 자기 기기에 깔아 보는 확인용 빌드에 실제
+      # 광고를 넣으면 내 노출·클릭이 무효 트래픽으로 잡혀 AdMob 계정이
+      # 정지될 수 있다. 스토어 제출 직전 확인이 필요할 때만 실행 시
+      # `ads=real`을 고른다.
+      #
+      # `real`인데 Secret이 비어 있으면 **빌드를 멈춘다** — 실제 광고를
+      # 기대하고 돌렸는데 조용히 테스트 광고가 박힌 APK가 나오면 그걸
+      # 그대로 스토어에 올리게 된다.
+      - name: 광고 설정 결정
+        id: ads
+        env:
+          ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+          ADMOB_BANNER_AD_UNIT_ID: ${{ secrets.ADMOB_BANNER_AD_UNIT_ID }}
+        run: |
+          if [ "${{ inputs.ads }}" = "real" ]; then
+            if [ -z "$ADMOB_APP_ID" ] || [ -z "$ADMOB_BANNER_AD_UNIT_ID" ]; then
+              echo "::error::ads=real인데 ADMOB_APP_ID 또는 " \
+                "ADMOB_BANNER_AD_UNIT_ID Secret이 비어 있습니다."
+              exit 1
+            fi
+            echo "real=true" >> "$GITHUB_OUTPUT"
+            echo "label=실제 AdMob 광고" >> "$GITHUB_OUTPUT"
+          else
+            echo "real=false" >> "$GITHUB_OUTPUT"
+            echo "label=구글 테스트 광고" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 실 API 키·광고 ID는 저장소 Secret에서만 주입한다 — 코드·로그에
+      # 노출되지 않는다(GitHub이 로그에서 Secret 값을 가린다).
+      # `DATA_GO_KR_API_KEY` Secret이 없으면 빈 값이 들어가 자동으로
+      # 합성(mock) 데이터로 동작한다.
+      #
+      # 광고 단위 ID는 `--dart-define`(Dart 코드가 읽는다), AdMob **앱 ID**는
+      # `ADMOB_APP_ID` 환경변수(Gradle이 AndroidManifest에 채운다)로 들어가는
+      # **경로가 다르다**. 둘 중 하나만 실제 값이면 광고가 조용히 안 나온다.
+      # `ads=test`일 때는 둘 다 넘기지 않아 Env·Gradle의 기본값(구글 공식
+      # 테스트 ID)이 그대로 쓰인다.
       - name: 릴리스 APK 빌드
-        run: >-
-          flutter build apk --release
-          --dart-define=DATA_GO_KR_API_KEY=${{ secrets.DATA_GO_KR_API_KEY }}
+        run: |
+          ad_defines=()
+          if [ "${{ steps.ads.outputs.real }}" = "true" ]; then
+            # Gradle이 AndroidManifest에 채울 앱 ID(경로가 다르다).
+            export ADMOB_APP_ID='${{ secrets.ADMOB_APP_ID }}'
+            ad_defines=(
+              "--dart-define=ADMOB_BANNER_AD_UNIT_ID=${{ secrets.ADMOB_BANNER_AD_UNIT_ID }}"
+              "--dart-define=ADMOB_WEATHER_BANNER_AD_UNIT_ID=${{ secrets.ADMOB_WEATHER_BANNER_AD_UNIT_ID }}"
+              "--dart-define=ADMOB_SETTINGS_BANNER_AD_UNIT_ID=${{ secrets.ADMOB_SETTINGS_BANNER_AD_UNIT_ID }}"
+            )
+          fi
+          flutter build apk --release \
+            --dart-define=DATA_GO_KR_API_KEY=${{ secrets.DATA_GO_KR_API_KEY }} \
+            "${ad_defines[@]}"
 
       # 태그와 **버전명**을 함께 계산한다. pubspec의 `version: 0.1.0+1`은
       # `버전명+빌드번호(versionCode)` 형식이라 `+`를 기준으로 나눈다.
@@ -77,9 +131,13 @@ jobs:
               (빌드 번호 `${{ steps.vars.outputs.version_code }}`)
             - **파일**: `${{ steps.vars.outputs.apk_name }}`
             - **커밋**: `${{ github.sha }}`
+            - **광고**: ${{ steps.ads.outputs.label }}
 
-            합성(mock) 데이터로 동작하며, 기상청 단기예보 실데이터는
-            `--dart-define=DATA_GO_KR_API_KEY=...` 로 직접 빌드해야
-            확인할 수 있습니다.
+            기상청 단기예보 실데이터는 저장소 Secret이 있을 때만 들어갑니다
+            (없으면 합성 데이터로 동작).
+
+            ${{ steps.ads.outputs.real == 'true'
+              && '⚠️ **실제 광고가 들어 있습니다.** 본인 기기에서 광고를 누르지 마세요 — 무효 트래픽으로 AdMob 계정이 정지될 수 있습니다.'
+              || '광고는 구글 공식 테스트 광고라 마음껏 눌러 봐도 됩니다.' }}
           files: build/app/outputs/flutter-apk/${{ steps.vars.outputs.apk_name }}
           prerelease: true

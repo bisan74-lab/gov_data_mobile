@@ -145,8 +145,28 @@ dart format lib test     # 커밋 전 포맷
 ```
 
 로컬 Android SDK 없이 실기기 APK가 필요하면 GitHub Actions `release-apk.yml`
-(workflow_dispatch)을 트리거 → Release(`test-build-N`)에서 `app-release.apk`를 받는다.
-이 빌드는 실 API 키 없이 합성(mock) 데이터로 동작한다.
+(workflow_dispatch)을 트리거 → Release(`test-build-N`)에서
+`golfwindy-v<버전>-test-build-N.apk`를 받는다.
+
+**광고는 실행 시 `ads` 입력으로 고른다 — 기본값은 `test`(구글 테스트 광고)다.**
+자기 기기에 깔아 보는 확인용 빌드에 실제 광고를 넣으면 내 노출·클릭이 무효
+트래픽으로 잡혀 **AdMob 계정이 정지될 수 있다.** 스토어 제출 직전 확인이
+필요할 때만 `ads=real`을 고른다.
+- `real`인데 Secret이 비어 있으면 **빌드를 멈춘다** — 실제 광고를 기대하고
+  돌렸는데 조용히 테스트 광고가 박힌 APK가 나오면 그대로 스토어에 올리게 된다.
+- 광고 ID는 **주입 경로가 둘로 갈린다**: 광고 단위 ID는 `--dart-define`
+  (Dart의 `Env`가 읽는다), AdMob **앱 ID**는 `ADMOB_APP_ID` 환경변수
+  (Gradle이 AndroidManifest 플레이스홀더에 채운다). **둘 중 하나만 실제
+  값이면 광고가 조용히 안 나온다.**
+- 쓰는 Secret: `ADMOB_APP_ID`(`~` 형식), `ADMOB_BANNER_AD_UNIT_ID`(홈, `/`
+  형식), `ADMOB_WEATHER_BANNER_AD_UNIT_ID`(날씨), `ADMOB_SETTINGS_BANNER_AD_UNIT_ID`
+  (설정). 뒤 둘은 없으면 홈 단위로 폴백한다.
+- 실 API 키(`DATA_GO_KR_API_KEY`)도 Secret에서만 주입한다. 없으면 합성(mock)
+  데이터로 동작한다.
+
+**스토어 제출용 AAB 워크플로는 아직 없다.** 만들 때는 업로드 키(Secret) 서명과
+`ads=real` 고정이 필요하고, `targetSdk`도 Play 요구 수준(현재 36)으로 못박아야
+한다(지금은 Flutter 기본값 35라 그대로는 업데이트가 막힌다).
 
 ## 반드시 지킬 것
 
