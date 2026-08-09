@@ -45,7 +45,7 @@ class PolicyScreen extends StatelessWidget {
             title: '4. 서비스의 변경·중단',
             body:
                 '개발자는 사전 고지 없이 서비스의 전부 또는 일부를 변경·중단하거나, '
-                '무료 서비스를 유료(광고 제거 등) 버전으로 전환할 수 있습니다.',
+                '무료 서비스를 유료 버전으로 전환할 수 있습니다.',
           ),
           _Section(
             title: '5. 개인정보',

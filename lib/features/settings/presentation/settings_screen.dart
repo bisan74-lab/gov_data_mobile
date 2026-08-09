@@ -10,7 +10,7 @@ import 'providers.dart';
 
 /// 설정 화면 — 템플릿과 정보를 한 화면에 세로로 나열한다.
 /// 맨 위 "템플릿"을 펼치면 앱 테마·밝기·배경 그래픽을 고를 수 있고,
-/// 그 아래로 문의·버전·광고 제거·약관 정보가 순서대로 이어진다.
+/// 그 아래로 문의·버전·약관 정보가 순서대로 이어진다.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -177,16 +177,10 @@ class _InfoSection extends StatelessWidget {
           ),
         ),
         const Divider(),
-        ListTile(
-          leading: Icon(
-            Icons.workspace_premium_outlined,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-          title: const Text('광고 제거'),
-          subtitle: const Text('유료 결제로 광고 없는 버전으로 업그레이드'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showRemoveAds(context),
-        ),
+        // GOLF: "광고 제거"(인앱 결제) 항목은 **일부러 없다.** 아직 그런
+        // 상품이 없는데 메뉴만 두면 눌러 본 사용자에게 "준비 중"만 보여
+        // 주게 되고, 스토어 심사에서도 없는 기능을 안내하는 셈이 된다.
+        // 유료 버전을 실제로 만들 때 다시 넣는다.
         ListTile(
           leading: const Icon(Icons.policy_outlined),
           title: const Text('정책 및 이용약관'),
@@ -223,42 +217,5 @@ class _InfoSection extends StatelessWidget {
         ),
       );
     }
-  }
-
-  void _showRemoveAds(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('광고 제거', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            const Text(
-              '광고 없는 버전으로 업그레이드할 수 있습니다.\n'
-              '인앱 결제는 스토어 배포 후 활성화됩니다.',
-              style: TextStyle(height: 1.5),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.workspace_premium),
-                label: const Text('업그레이드 (준비 중)'),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('인앱 결제는 정식 배포 후 제공될 예정입니다.')),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

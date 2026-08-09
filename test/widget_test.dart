@@ -202,5 +202,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('오류신고 및 사업제휴 문의'), findsOneWidget);
+
+    // **"광고 제거"(인앱 결제) 항목은 없어야 한다.** 그런 상품이 아직
+    // 없는데 메뉴만 두면 눌러 본 사용자에게 "준비 중"만 보여 주게 되고,
+    // 스토어 심사에서도 없는 기능을 안내하는 셈이 된다(사용자 요구로 삭제).
+    expect(find.text('광고 제거'), findsNothing);
+    expect(find.byIcon(Icons.workspace_premium_outlined), findsNothing);
   });
 }
