@@ -165,10 +165,23 @@ dart format lib test     # 커밋 전 포맷
   데이터로 동작한다.
 
 **스토어 제출용 AAB 워크플로는 아직 없다.** 만들 때는 업로드 키(Secret) 서명과
-`ads=real` 고정이 필요하고, `targetSdk`도 Play 요구 수준(현재 36)으로 못박아야
-한다(지금은 Flutter 기본값 35라 그대로는 업데이트가 막힌다).
+`ads=real` 고정이 필요하다.
 
 ## 반드시 지킬 것
+
+- **대상 API 수준은 `android/app/build.gradle.kts`의 `playTargetSdk`로 못박는다**
+  (현재 36 = Android 16). Flutter의 기본값(`flutter.targetSdkVersion`)을 그대로
+  쓰면 안 된다 — Flutter 3.32.5의 기본은 35라서 Google Play가 요구하는
+  "최신 Android 출시로부터 1년 이내"에 미달해 **앱 업데이트 제출 자체가 막힌다**
+  (2026-08-31부터). 세 곳이 한 벌로 맞물려 있어 값을 올릴 땐 함께 본다:
+  - `playTargetSdk`(+ `compileSdk`는 `maxOf`로 따라 올라간다)
+  - `settings.gradle.kts`의 **AGP 버전** — 그 API를 지원하는 버전이어야 한다
+    (8.7.3은 API 35까지라 36에서 깨진다. 현재 8.9.1, Gradle 래퍼 8.12)
+  - 워크플로 두 개(`ci.yml`·`release-apk.yml`)의 **`sdkmanager` 설치 단계** —
+    없으면 `failed to find target with hash string android-36`으로 깨진다
+- **`minSdk`은 23 이상**(`maxOf(23, flutter.minSdkVersion)`). Google Mobile Ads
+  SDK가 API 23을 요구해서, Flutter 기본값 21이면 매니페스트 병합에서 빌드가
+  깨진다. Android 5.x는 설치 대상에서 빠진다.
 
 - **앱 전체에 글자 배율 상한 `kMaxTextScale`(1.5)이 걸려 있다**(`app/app.dart`의
   `clampAppTextScale`을 `MaterialApp.builder`에 넘긴다). 시스템 글자 크기를

@@ -5,9 +5,24 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Play Console이 요구하는 대상 API 수준.
+//
+// **Flutter의 기본값(`flutter.targetSdkVersion`)을 그대로 쓰면 안 된다** —
+// Flutter 3.32.5의 기본값은 35(Android 15)인데, Google Play는 2026-08-31부터
+// **최신 Android 출시로부터 1년 이내**(현재 36 = Android 16)를 요구하고,
+// 그보다 낮으면 **앱 업데이트 제출 자체가 막힌다.** Flutter를 올리지 않고도
+// 대응할 수 있도록 여기서 명시적으로 고정한다.
+//
+// Play가 요구 수준을 올리면(매년 8월경) 이 값을 올리고, AGP가 그 API를
+// 지원하는 버전인지 `settings.gradle.kts`에서 함께 확인한다. 릴리스·CI
+// 워크플로도 `sdkmanager`로 해당 플랫폼을 미리 설치해야 한다 — 없으면
+// "failed to find target with hash string android-NN"으로 깨진다.
+val playTargetSdk = 36
+
 android {
     namespace = "com.golfwindy.golf_windy"
-    compileSdk = flutter.compileSdkVersion
+    // compileSdk는 targetSdk 이상이어야 한다.
+    compileSdk = maxOf(playTargetSdk, flutter.compileSdkVersion)
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -30,7 +45,7 @@ android {
         // declared in library [:google_mobile_ads]`). Flutter가 기본값을
         // 올리더라도 낮아지지 않도록 maxOf로 둔다.
         minSdk = maxOf(23, flutter.minSdkVersion)
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = playTargetSdk
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
