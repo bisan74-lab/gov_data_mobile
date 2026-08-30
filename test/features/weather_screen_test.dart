@@ -333,4 +333,148 @@ void main() {
 
     expect(container.read(selectedLocationProvider).id, target.id);
   });
+  testWidgets('지도에서 시각을 옮긴 뒤 상세 예보를 열었다 닫아도 그 시각이 유지된다', (tester) async {
+    // 바다윈디에서 제보돼 고친 두 가지를 골프윈디에서도 막는 회귀 테스트다.
+    //  (1) 표를 닫을 때 `_closeDetail`이 지도 시각을 "지금"으로 되돌리던 것.
+    //  (2) 표를 열 때 지도의 선택 시각이 아니라 "지금" 칸부터 보여 주던 것 —
+    //      이 경우 표가 열리는 순간 `_syncMapHour`가 지도 시각까지 "지금"으로
+    //      끌어내려, 닫고 나면 옮겨 둔 시각이 사라진다.
+    // 둘 중 하나만 깨져도 아래 마지막 기대가 실패한다.
+    await pumpWeatherScreen(tester);
+    final nowLabel = _mapTimeLabel(tester); // 옮기기 전 = "지금"
+
+    // 지도 시간 바의 ▶로 몇 시간 앞으로 옮긴다.
+    final next = find.byTooltip('다음 시각');
+    expect(next, findsOneWidget);
+    for (var i = 0; i < 3; i++) {
+      await tester.tap(next);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    // 옮긴 뒤에는 "+N시간" 같은 상대 시간 표시가 붙는다("지금"이 아니다).
+    // find.text('지금')은 항상 있는 "지금" 버튼과 구분이 안 되므로 쓰지 않는다.
+    expect(
+      _relativeLabels(tester),
+      isNotEmpty,
+      reason: '시각을 옮겼는데 상대 시간 표시가 없다',
+    );
+    final moved = _mapTimeLabel(tester);
+
+    // 상세 예보를 열었다가 닫는다. **표가 자리를 잡을 때까지 넉넉히
+    // 프레임을 진행시킨 뒤** 닫기를 누른다 — 표가 뜨는 도중에는 예보가
+    // 채워지며 패널 높이가 변해 닫기(X) 버튼이 움직이고, 그 사이에 누르면
+    // 탭이 빗나가 닫히지 않는다(파티클 Ticker가 있어 pumpAndSettle은 못 쓴다).
+    await tester.tap(topBarDetailIcon());
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.tap(find.byIcon(Icons.close));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    // 표는 3시간 간격이라 지도의 13:00이 12:00 칸으로 붙는 것은 정상이다.
+    // 잡아야 하는 것은 **"지금"으로 되돌아가는 것** — 그러면 옮겨 둔 날짜가
+    // 사라진 것처럼 보인다. 그래서 옮긴 뒤 값과 같은지가 아니라, 옮기기 전
+    // ("지금") 값으로 돌아가지 않았는지를 본다.
+    final after = _mapTimeLabel(tester);
+    expect(after, isNot(nowLabel), reason: '상세 예보를 닫으니 지도 시각이 "지금"으로 되돌아갔다');
+    expect(
+      _relativeLabels(tester),
+      isNotEmpty,
+      reason: '상세 예보를 닫으니 지도가 "지금"으로 되돌아갔다(상대 시간 표시가 사라졌다)',
+    );
+    // 옮겨 둔 시각 그 자체이거나, 표의 칸 간격만큼만 붙은 값이어야 한다.
+    expect(after.compareTo(nowLabel), isNot(0));
+    debugPrint('지도 시각: 지금=$nowLabel → 옮김=$moved → 닫은 뒤=$after');
+  });
+  testWidgets('지도에서 시각을 옮긴 뒤 상세 예보를 열면 그 시각부터 보여 준다', (tester) async {
+    // 표가 "지금"부터 열리면, 지도에서 애써 옮겨 둔 날짜가 사라진 것처럼
+    // 보인다(바다윈디 제보로 고친 것). 표는 3시간 간격이라 지도 시각과
+    // 정확히 같을 수는 없고 **가장 가까운 칸**으로 붙는다 — 그래서 두 시각의
+    // 차이가 칸 간격의 절반 안쪽인지로 본다. "지금"부터 열리면 옮긴 만큼
+    // (여기선 3시간) 벌어져 이 검사에 걸린다.
+    await pumpWeatherScreen(tester);
+
+    // **넉넉히 멀리 옮긴다(12시간).** 3시간만 옮기면 표의 3시간 칸에서
+    // "지금 기준"과 "지도 기준"이 같은 칸으로 떨어지는 시간대가 생겨, 고쳐도
+    // 안 고쳐도 통과하는 무의미한 검사가 된다(실제로 그렇게 새 버렸다).
+    final next = find.byTooltip('다음 시각');
+    for (var i = 0; i < 12; i++) {
+      await tester.tap(next);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final mapTime = _parseMapLabel(_mapTimeLabel(tester));
+
+    await tester.tap(topBarDetailIcon());
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    final panelTime = _panelHeaderTime(tester);
+    expect(
+      panelTime.difference(mapTime).abs(),
+      lessThanOrEqualTo(const Duration(minutes: 90)),
+      reason: '상세 예보가 지도 시각($mapTime)이 아니라 딴 시각($panelTime)부터 열렸다',
+    );
+  });
+}
+
+/// 지도 라벨("8/30 (일) 13:00")을 [DateTime]으로. 연도는 비교에만 쓰이므로
+/// 아무 값이나 넣되 양쪽을 같은 규칙으로 만든다.
+DateTime _parseMapLabel(String label) {
+  final m = RegExp(
+    r'^(\d{1,2})/(\d{1,2}) \(.\) (\d{2}):(\d{2})$',
+  ).firstMatch(label)!;
+  return DateTime(
+    2000,
+    int.parse(m.group(1)!),
+    int.parse(m.group(2)!),
+    int.parse(m.group(3)!),
+    int.parse(m.group(4)!),
+  );
+}
+
+/// 상세 예보 표 머리의 선택 시각("8월 30일 (일) 12:00").
+DateTime _panelHeaderTime(WidgetTester tester) {
+  final re = RegExp(r'^(\d{1,2})월 (\d{1,2})일 \(.\) (\d{2}):(\d{2})$');
+  final hits = tester
+      .widgetList<Text>(find.byType(Text))
+      .map((t) => t.data)
+      .whereType<String>()
+      .where(re.hasMatch)
+      .toList();
+  expect(hits, isNotEmpty, reason: '상세 예보 표의 선택 시각을 찾지 못했다');
+  final m = re.firstMatch(hits.first)!;
+  return DateTime(
+    2000,
+    int.parse(m.group(1)!),
+    int.parse(m.group(2)!),
+    int.parse(m.group(3)!),
+    int.parse(m.group(4)!),
+  );
+}
+
+/// 지도 시각이 "지금"에서 벗어났을 때만 붙는 "+N시간"/"-N시간" 표시.
+List<String> _relativeLabels(WidgetTester tester) {
+  final re = RegExp(r'^[+-]\d+시간$');
+  return tester
+      .widgetList<Text>(find.byType(Text))
+      .map((t) => t.data)
+      .whereType<String>()
+      .where(re.hasMatch)
+      .toList();
+}
+
+/// 지도 하단 시간 바의 "월/일 (요일) 시:분" 라벨 문자열.
+String _mapTimeLabel(WidgetTester tester) {
+  final re = RegExp(r'^\d{1,2}/\d{1,2} \(.\) \d{2}:\d{2}$');
+  final hits = tester
+      .widgetList<Text>(find.byType(Text))
+      .map((t) => t.data)
+      .whereType<String>()
+      .where(re.hasMatch)
+      .toList();
+  expect(hits, isNotEmpty, reason: '지도 시간 라벨을 찾지 못했다');
+  return hits.first;
 }

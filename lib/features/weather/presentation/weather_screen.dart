@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/app_tab_provider.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/utils/kst.dart';
+import '../../../core/utils/latest_only_runner.dart';
 import '../../golf/data/models/golf_course.dart';
 import '../../golf/presentation/providers.dart';
 import '../../golf/presentation/widgets/golf_marker_layer.dart';
@@ -135,15 +136,14 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
   _focusTarget = ValueNotifier(null);
 
   void _closeDetail() {
+    // **지도 시각은 건드리지 않는다.** 상세 예보 표가 시각을 고를 때마다
+    // `_syncMapHour`가 이미 `_hourOffset`을 그 시각으로 맞춰 두므로, 여기서
+    // "지금"으로 되돌리면 방금 보고 있던 미래/과거 시각이 창을 닫는 순간
+    // 사라지는 것처럼 보인다(바다윈디 사용자 제보). 지도로 돌아가도 보던
+    // 시각 그대로 두고, "지금"으로 가고 싶으면 하단 슬라이더의 "지금"
+    // 버튼을 쓰면 된다.
     _roseHour.value = null;
-    setState(() {
-      _forecastPoint = null;
-      // 표를 닫으면 지도를 다시 현재 시각(서울 기준) 바람으로 되돌린다.
-      final series = _series;
-      if (series != null) {
-        _hourOffset = series.indexAtOrBefore(nowKst());
-      }
-    });
+    setState(() => _forecastPoint = null);
   }
 
   /// 지도 모드 하단 슬라이더로 바람장 시각을 바꾼다.
@@ -428,6 +428,8 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
                         location: fp,
                         roseHour: _roseHour,
                         onClose: _closeDetail,
+                        // 지도에서 골라 둔 시각(_hourOffset) 그대로 열린다.
+                        initialTime: field.time,
                       ),
                     ),
                   ),
@@ -533,6 +535,13 @@ class _WindMapAreaState extends State<_WindMapArea> {
   /// 낡은 결과를 버린다(시간 비교만으로는 같은 시각의 재빌드 경쟁을 못 거름).
   int _heatmapRequestId = 0;
 
+  /// 배경 히트맵 재굽기를 "한 번에 하나만" 돌게 조율한다 — `divisions` 없는
+  /// 연속 슬라이더라 드래그 한 번에 시각이 수십 번 바뀌는데, 바뀔 때마다
+  /// 새 아이솔레이트를 스폰하면 그 스폰·직렬화 경합만으로 프레임이 밀린다
+  /// (바다윈디에서 "지도에서 날짜를 이동할 때 반응이 너무 느리다"로 제보돼
+  /// 고친 것을 그대로 가져왔다). [LatestOnlyRunner] 문서 참고.
+  final _heatmapRunner = LatestOnlyRunner();
+
   /// 고해상도 오버레이 범위: 남한 전역 + 서해·남해·동해·대한해협·규슈 연안.
   /// 전체 bbox 래스터보다 훨씬 촘촘한 밀도로 구워 확대해도 뭉개지지 않는다.
   static const _coreBounds = LatLonBounds(
@@ -616,7 +625,15 @@ class _WindMapAreaState extends State<_WindMapArea> {
   ///
   /// 손을 떼면 [_bakeCoreIfNeeded]가 **배경은 그대로 두고 핵심영역만** 채운다
   /// — 그 시각 배경은 스크럽 중에 이미 구워 놨으므로 다시 구울 이유가 없다.
-  Future<void> _rebuildHeatmap() async {
+  /// **실제로 굽는 일은 [_heatmapRunner]가 한 번에 하나만 돌게 조율한다** —
+  /// 드래그 중 시각이 겹쳐 바뀌어도 진행 중인 굽기가 끝날 때까지 새 아이솔
+  /// 레이트를 스폰하지 않고, 끝난 뒤 그사이 최신 시각으로 한 번만 이어서
+  /// 돈다(중간에 지나친 시각은 건너뛴다). 그래서 아래 [_doRebuildHeatmap]은
+  /// 항상 `widget.field`(호출 시점이 아니라 **실제로 도는 시점**의 최신 값)를
+  /// 다시 읽어야 한다 — [LatestOnlyRunner] 문서의 사용 조건.
+  void _rebuildHeatmap() => _heatmapRunner.run(_doRebuildHeatmap);
+
+  Future<void> _doRebuildHeatmap() async {
     final field = widget.field;
     final time = field.time;
     final requestId = ++_heatmapRequestId;
@@ -1516,6 +1533,7 @@ class _PointForecastPanel extends ConsumerStatefulWidget {
     required this.location,
     required this.roseHour,
     required this.onClose,
+    required this.initialTime,
   });
 
   final SeaLocation location;
@@ -1523,6 +1541,12 @@ class _PointForecastPanel extends ConsumerStatefulWidget {
   /// 선택 중인 시각의 해양값을 지도 위 방향 나침반에 전달하는 통로.
   final ValueNotifier<HourlyMarine?> roseHour;
   final VoidCallback onClose;
+
+  /// 표가 처음 열릴 때 맞춰야 할 시각 — 지도에서 시간 슬라이더로 골라 둔
+  /// 시각이다. 이게 없으면 지도에서 미래 날짜를 골라 두고 상세 예보로
+  /// 들어가도 표가 "지금"부터 보여, 방금 고른 날짜가 사라진 것처럼 보인다
+  /// (바다윈디 사용자 제보로 고친 것을 그대로 가져왔다).
+  final DateTime initialTime;
 
   @override
   ConsumerState<_PointForecastPanel> createState() =>
@@ -1542,12 +1566,15 @@ class _PointForecastPanelState extends ConsumerState<_PointForecastPanel> {
   MarineForecast? _lastForecast;
 
   /// [steps] 중 현재 시각(서울 기준)과 가장 가까운 칸의 인덱스.
-  int _closestToNow(List<HourlyMarine> steps) {
-    final now = nowKst();
+  int _closestToNow(List<HourlyMarine> steps) => _closestTo(steps, nowKst());
+
+  /// [target]에 가장 가까운 칸. 진입 시엔 지도에서 고른 시각을, "지금" 표시
+  /// 판정엔 현재 시각을 넣는다 — 둘을 같은 함수로 재면 기준이 어긋나지 않는다.
+  int _closestTo(List<HourlyMarine> steps, DateTime target) {
     var best = 0;
     var bestDiff = const Duration(days: 999);
     for (var k = 0; k < steps.length; k++) {
-      final d = steps[k].time.difference(now).abs();
+      final d = steps[k].time.difference(target).abs();
       if (d < bestDiff) {
         bestDiff = d;
         best = k;
@@ -1701,10 +1728,12 @@ class _PointForecastPanelState extends ConsumerState<_PointForecastPanel> {
                   }
                   _stepCount = steps.length;
                   final nowIdx = _closestToNow(steps);
-                  // 진입 시 현재 시각과 가장 가까운 칸에 위치시키고 그리로 스크롤.
+                  // 진입 시 **지도에서 골라 둔 시각**과 가장 가까운 칸에
+                  // 위치시키고 그리로 스크롤한다. "지금"이 아니라 이 시각을
+                  // 쓰는 이유는 [_PointForecastPanel.initialTime] 설명 참고.
                   if (!_initialized) {
                     _initialized = true;
-                    _i = nowIdx;
+                    _i = _closestTo(steps, widget.initialTime);
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (mounted) _scrollToSelected();
                     });
